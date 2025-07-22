@@ -224,6 +224,7 @@ MappedFile::MappedFile(const char *fname)
     buf = NULL;
     buflen = 0;
     handle = NULL;
+    use_malloc = false;
 
     if (!fname)
 	return;
@@ -237,7 +238,6 @@ MappedFile::MappedFile(const char *fname)
 
     struct stat sb;
     int ret = fstat(fd, &sb);
-
     if (UNLIKELY(ret < 0) || UNLIKELY(sb.st_size == 0)) {
 	(void)close(fd);
 	return;
@@ -246,42 +246,68 @@ MappedFile::MappedFile(const char *fname)
     buflen = sb.st_size;
 
     /* Attempt to memory-map the file */
+    bool mapped = false;
 #if defined(HAVE_SYS_MMAN_H)
     buf = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    mapped = (buf && buf != MAP_FAILED);
 #elif defined(HAVE_WINDOWS_H)
     /* FIXME: shouldn't need to preserve handle */
     buf = win_mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0, &handle);
+    mapped = (buf && buf != MAP_FAILED);
 #endif /* HAVE_SYS_MMAN_H */
 
-    /* If cannot memory-map, read it in manually */
-    if (!buf || buf == MAP_FAILED) {
-    	(void)close(fd);
-	buf = NULL;
-	buflen = 0;
+    // If successful, we're done
+    if (mapped) {
+#if !defined(HAVE_WINDOWS_H)
+	(void)close(fd);
+#else
+	// TODO - look into what we might need on Windows in a mapping case
+#endif
 	return;
     }
 
-#if !defined(HAVE_WINDOWS_H)
+    /* Failed - fallback to manually reading the file into a malloc'd buffer */
+    buf = malloc(buflen);
+    if (!buf) {
+	(void)close(fd);
+	buflen = 0;
+	return;
+    }
+    use_malloc = true; // Tell the destructor it needs to clean up
+    size_t off = 0;
+    while (off < buflen) {
+	ssize_t r = read(fd, (char *)buf + off, buflen - off);
+	if (r <= 0) {
+	    free(buf);
+	    buf = NULL;
+	    buflen = 0;
+	    (void)close(fd);
+	    return;
+	}
+	off += r;
+    }
     (void)close(fd);
-#else
-    // TODO - look into what we might need on Windows in a mapping case
-#endif
+    handle = NULL;
 }
 
 MappedFile::~MappedFile()
 {
-    if (buf) {
+    if (!buf)
+	return;
 
-	int ret = 0;
+    if (use_malloc) {
+	free(buf);
+    } else {
 #ifdef HAVE_SYS_MMAN_H
-	ret = munmap(buf, buflen);
+	munmap(buf, buflen);
 #elif defined(_WIN32)
-	ret = win_munmap(buf, buflen, handle);
+	win_munmap(buf, buflen, handle);
 #endif
     }
 
     buf = NULL;		/* sanity */
     buflen = 0;		/* sanity */
+    handle = NULL;	/* sanity */
 }
 
 

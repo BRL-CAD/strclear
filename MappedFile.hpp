@@ -50,6 +50,7 @@ class MappedFile {
 	size_t buflen;      /**< # bytes in 'buf'  */
     private:
 	void *handle;       /**< for internal file-specific implementation data */
+	bool use_malloc;
 };
 
 // Local Variables:
