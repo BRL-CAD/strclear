@@ -228,7 +228,7 @@ MappedFile::MappedFile(const char *fname)
     if (!fname)
 	return;
 
-    name = std::string(name);
+    name = std::string(fname);
 
     int fd = open(fname, O_RDONLY | O_BINARY);
 
@@ -250,7 +250,7 @@ MappedFile::MappedFile(const char *fname)
     buf = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 #elif defined(HAVE_WINDOWS_H)
     /* FIXME: shouldn't need to preserve handle */
-    buf = win_mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0, &(mp->handle));
+    buf = win_mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0, &handle);
 #endif /* HAVE_SYS_MMAN_H */
 
     /* If cannot memory-map, read it in manually */
@@ -258,7 +258,14 @@ MappedFile::MappedFile(const char *fname)
     	(void)close(fd);
 	buf = NULL;
 	buflen = 0;
+	return;
     }
+
+#if !defined(HAVE_WINDOWS_H)
+    (void)close(fd);
+#else
+    // TODO - look into what we might need on Windows in a mapping case
+#endif
 }
 
 MappedFile::~MappedFile()
