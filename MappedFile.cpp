@@ -122,6 +122,12 @@
 #  define b_off_t off_t
 #endif
 
+/* Make sure we have ssize_t */
+#if defined(_WIN32) && !defined(_SSIZE_T_DEFINED)
+typedef int ssize_t;
+#define _SSIZE_T_DEFINED
+#endif
+
 /* Based on the public domain wrapper implemented by Mike Frysinger:
  * https://cgit.uclibc-ng.org/cgi/cgit/uclibc-ng.git/tree/utils/mmap-windows.c */
 #ifdef _WIN32
