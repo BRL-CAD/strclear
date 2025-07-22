@@ -45,6 +45,7 @@
  */
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -167,6 +168,33 @@ process_text(std::string &fname, std::string &target_str, std::string &replace_s
     return 0;
 }
 
+// Text vs. binary file heuristic (generated with GPT-4.1 assistance)
+bool is_binary(std::ifstream &file, size_t max_check = 4096, double nontext_threshold = 0.1)
+{
+    size_t n_read = 0;
+    size_t n_nontext = 0;
+    char c;
+    while (n_read < max_check && file.get(c)) {
+	n_read++;
+	// Null byte: almost always binary
+	if (c == '\0')
+	    return true;
+	// Accept printable ASCII (32–126), CR, LF, TAB, FF
+	if ((c >= 32 && c <= 126) || c == '\n' || c == '\r' || c == '\t' || c == '\f')
+	    continue;
+	// Accept valid 8-bit UTF-8 lead bytes (for text, this is not 100% but helps)
+	if ((unsigned char)c >= 0xC2 && (unsigned char)c <= 0xF4)
+	    continue;
+	n_nontext++;
+    }
+
+    if (n_read == 0)
+	return false; // empty file: treat as text
+
+    // If more than 10% non-text, guess binary
+    return (double)n_nontext / n_read > nontext_threshold;
+}
+
 int
 main(int argc, const char *argv[])
 {
@@ -184,8 +212,6 @@ main(int argc, const char *argv[])
 
     try
     {
-
-
 	options
 	    .set_width(70)
 	    .add_options()
@@ -253,13 +279,12 @@ main(int argc, const char *argv[])
     // to treat it as binary explicitly with -b.  If we've been told text mode
     // we still check to make sure we really have a text file before processing.
     if (!binary_mode) {
-	// TODO - can we do this faster?
-	std::ifstream check_fs;
-	check_fs.open(fname);
-	int c;
-	while ((c = check_fs.get()) != EOF && c < 128);
-	binary_mode = (c == EOF) ? false : true;
-	check_fs.close();
+	std::ifstream check_fs(fname, std::ios::binary);
+	if (!check_fs.is_open()) {
+	    std::cerr << "Error:  unable to open " << fname << "\n";
+	    return -1;
+	}
+	binary_mode = is_binary(check_fs);
     }
 
     // If all we're supposed to do is determine the type, return success (0) if
