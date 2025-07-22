@@ -307,7 +307,7 @@ main(int argc, const char *argv[])
     }
 
     std::string target_str(nonopts[1]);
-    std::string replace_str(nonopts[2]);
+    std::string replace_str = (swap_mode) ? std::string(nonopts[2]) : std::string("");
     return process_text(fname, target_str, replace_str, verbose);
 }
 
