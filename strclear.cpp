@@ -74,14 +74,12 @@ process_binary(std::string &fname, std::vector<std::string> &target_strs, char c
     int grcnt = 0;
     for (size_t i = 0; i < target_strs.size(); i++) {
 	std::vector<char> search_chars(target_strs[i].begin(), target_strs[i].end());
-	std::vector<char> null_chars;
-	for (size_t j = 0; j < search_chars.size(); j++)
-	    null_chars.push_back(clear_char);
+	std::vector<char> null_chars(search_chars.size(), clear_char);
 
 	// Find instances of target string in binary, and replace any we find
-	auto position = std::search(bin_contents.begin(), bin_contents.end(), search_chars.begin(), search_chars.end());
+	auto position = bin_contents.begin();
 	int rcnt = 0;
-	while (position != bin_contents.end()) {
+	while ((position = std::search(position, bin_contents.end(), search_chars.begin(), search_chars.end())) != bin_contents.end()) {
 	    std::copy(null_chars.begin(), null_chars.end(), position);
 	    rcnt++;
 	    if (verbose && rcnt == 1)
@@ -92,7 +90,7 @@ process_binary(std::string &fname, std::vector<std::string> &target_strs, char c
 		    cchar = std::string("\\0");
 		std::cout << "\tclearing instance #" << rcnt << " of " << target_strs[i] << " with the '" << cchar << "' char\n";
 	    }
-	    position = std::search(position, bin_contents.end(), search_chars.begin(), search_chars.end());
+	    position += search_chars.size();
 	}
 	grcnt += rcnt;
     }
@@ -141,18 +139,18 @@ process_text(std::string &fname, std::string &target_str, std::string &replace_s
     input_fs.close();
     if (!nfile_contents.length())
 	return 0;
-    auto position = std::search(nfile_contents.begin(), nfile_contents.end(), target_str.begin(), target_str.end());
-    if (position == nfile_contents.end())
-	return 0;
+
+    // Use index and std::string::find for O(N) replacement
+    size_t pos = 0;
     int rcnt = 0;
-    while (position != nfile_contents.end()) {
-	nfile_contents.replace(nfile_contents.find(target_str), target_str.size(), replace_str);
+    while ((pos = nfile_contents.find(target_str, pos)) != std::string::npos) {
+	nfile_contents.replace(pos, target_str.size(), replace_str);
 	rcnt++;
 	if (verbose && rcnt == 1)
 	    std::cout << fname << ":\n";
 	if (verbose)
 	    std::cout << "\treplacing instance #" << rcnt << " of " << target_str << " with " << replace_str << "\n";
-	position = std::search(nfile_contents.begin(), nfile_contents.end(), target_str.begin(), target_str.end());
+	pos += replace_str.size();
     }
     if (!rcnt)
 	return 0;
@@ -243,6 +241,12 @@ main(int argc, const char *argv[])
 	return -1;
     }
 
+    // For swap_mode, we need exactly 3 nonopts (file, target, replace)
+    if (swap_mode && nonopts.size() != 3) {
+       std::cerr << "Error:  replacing string in text file - need file, target string and replacement string as arguments.\n";
+       return -1;
+    }
+
     std::string fname(nonopts[0]);
 
     // Determine if the file is a binary or text file, if we've not been told
@@ -277,10 +281,6 @@ main(int argc, const char *argv[])
 	return process_binary(fname, target_strs, clear_char, verbose);
     }
 
-    if (nonopts.size() > 3) {
-	std::cerr << "Error:  replacing string in text file - need file, target string and replacement string as arguments.\n";
-	return -1;
-    }
     std::string target_str(nonopts[1]);
     std::string replace_str(nonopts[2]);
     return process_text(fname, target_str, replace_str, verbose);
