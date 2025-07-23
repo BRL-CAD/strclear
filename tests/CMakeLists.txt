@@ -30,7 +30,7 @@ set(FILE1 "${TESTDIR}/plain.txt")
 file(WRITE "${FILE1}" "${TEXT1}")
 
 add_test(NAME BasicStringReplace
-    COMMAND strclear -r "${FILE1}" foo baz
+    COMMAND strclear -v "${FILE1}" foo baz
 )
 set_tests_properties(BasicStringReplace PROPERTIES
     FIXTURES_SETUP basic_replace
@@ -56,7 +56,7 @@ file(WRITE "${TESTDIR}/${REL_PATH}" "dummy")
 file(WRITE "${ABS_PATH}" "dummy")
 
 add_test(NAME PathExpansionReplace
-    COMMAND strclear -r -p "${FILE2}" "${REL_PATH}" CLEARED
+    COMMAND strclear -v -p "${FILE2}" "${REL_PATH}" CLEARED
 )
 set_tests_properties(PathExpansionReplace PROPERTIES
     FIXTURES_SETUP path_replace
@@ -80,7 +80,7 @@ file(WRITE "${SRC_FILE}" "dummy")
 file(CREATE_LINK "${SRC_FILE}" "${SYM_PATH}" SYMBOLIC)
 
 add_test(NAME SymlinkPathExpansionReplace
-    COMMAND strclear -r -p "${FILE3}" "${SYM_PATH}" "CLEAN"
+    COMMAND strclear -v -p "${FILE3}" "${SYM_PATH}" "CLEAN"
 )
 set_tests_properties(SymlinkPathExpansionReplace PROPERTIES
     FIXTURES_SETUP symlink_replace
@@ -99,7 +99,7 @@ set(TEXT_NOMATCH "Just a normal text file.")
 file(WRITE "${FILE_NOMATCH}" "${TEXT_NOMATCH}")
 
 add_test(NAME NoReplacementIfNoMatch
-    COMMAND strclear -r "${FILE_NOMATCH}" "foo" "bar"
+    COMMAND strclear -v "${FILE_NOMATCH}" "foo" "bar"
 )
 set_tests_properties(NoReplacementIfNoMatch PROPERTIES
     FIXTURES_SETUP no_replace
@@ -118,7 +118,7 @@ set(TEXT_MULTI "foo bar foo baz foo")
 file(WRITE "${FILE_MULTI}" "${TEXT_MULTI}")
 
 add_test(NAME MultipleReplacements
-    COMMAND strclear -r "${FILE_MULTI}" foo CLEARED
+    COMMAND strclear -v "${FILE_MULTI}" foo CLEARED
 )
 set_tests_properties(MultipleReplacements PROPERTIES
     FIXTURES_SETUP multi_replace
@@ -136,7 +136,7 @@ set(FILE_EMPTYSEARCH "${TESTDIR}/emptysearch.txt")
 file(WRITE "${FILE_EMPTYSEARCH}" "some text")
 
 add_test(NAME EmptySearchString
-    COMMAND strclear -r "${FILE_EMPTYSEARCH}" "" replacement
+    COMMAND strclear -v "${FILE_EMPTYSEARCH}" "" replacement
 )
 set_tests_properties(EmptySearchString PROPERTIES
     WILL_FAIL TRUE
@@ -147,7 +147,7 @@ set(FILE_ONLYSEARCH "${TESTDIR}/onlysearch.txt")
 file(WRITE "${FILE_ONLYSEARCH}" "foo")
 
 add_test(NAME OnlySearchString
-    COMMAND strclear -r "${FILE_ONLYSEARCH}" foo gone
+    COMMAND strclear -v "${FILE_ONLYSEARCH}" foo gone
 )
 set_tests_properties(OnlySearchString PROPERTIES
     FIXTURES_SETUP onlysearch_replace
@@ -170,7 +170,7 @@ foreach(i RANGE 1 1000)
 endforeach()
 
 add_test(NAME LargeFileReplacement
-    COMMAND strclear -r "${FILE_LARGE}" foo bar
+    COMMAND strclear -v "${FILE_LARGE}" foo bar
 )
 set_tests_properties(LargeFileReplacement PROPERTIES
     FIXTURES_SETUP large_replace
@@ -189,7 +189,7 @@ set_tests_properties(VerifyLargeFileReplacement PROPERTIES
 ## Note: 💧 is a multi-byte character; CMake will encode as UTF-8
 #file(WRITE "${FILE_UTF8}" "αβγ foo δει foo ζ")
 #add_test(NAME UnicodeReplacement
-#    COMMAND strclear -r "${FILE_UTF8}" foo 💧
+#    COMMAND strclear -v "${FILE_UTF8}" foo 💧
 #)
 #set_tests_properties(UnicodeReplacement PROPERTIES
 #    FIXTURES_SETUP unicode_replace
@@ -208,7 +208,7 @@ file(WRITE "${FILE_RO}" "foo bar")
 execute_process(COMMAND chmod a-w "${FILE_RO}")
 
 add_test(NAME ReadOnlyFile
-    COMMAND strclear -r "${FILE_RO}" foo bar
+    COMMAND strclear -v "${FILE_RO}" foo bar
 )
 set_tests_properties(ReadOnlyFile PROPERTIES
     WILL_FAIL TRUE
@@ -216,7 +216,7 @@ set_tests_properties(ReadOnlyFile PROPERTIES
 
 # --- Test 11: Help and Version Output ---
 add_test(NAME StrclearHelp
-    COMMAND strclear --help
+    COMMAND strclear -v --help
 )
 set_tests_properties(StrclearHelp PROPERTIES
     PASS_REGULAR_EXPRESSION "usage|help|clear"
@@ -225,7 +225,7 @@ set_tests_properties(StrclearHelp PROPERTIES
 # --- Test 12: Nonexistent File (should fail) ---
 set(NONEXISTENT_FILE "${TESTDIR}/does_not_exist.txt")
 add_test(NAME NonexistentFile
-    COMMAND strclear -r "${NONEXISTENT_FILE}" foo bar
+    COMMAND strclear -v "${NONEXISTENT_FILE}" foo bar
 )
 set_tests_properties(NonexistentFile PROPERTIES
     WILL_FAIL TRUE

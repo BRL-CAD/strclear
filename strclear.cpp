@@ -34,14 +34,19 @@
  */
 /** @file strclear.cpp
  *
- * Two modes for this tool:
+ * This tool has two primary jobs:
  *
- * Given a binary (or text) file and a string, replace any instances of the
- * string in the binary with null chars.
+ * Given a binary file and a string, replace any instances of the string in the
+ * binary with null chars (or a different character specified by an option.)
  *
- * Given a text file, a target string and a replacement string, replace all
- * instances of the target string with the replacement string.
- * TODO: For the moment, the replacement string can't contain the target string.
+ * Given a text file, a target string and an optional replacement string,
+ * replace all instances of the target string with the replacement string (or
+ * remove the target string if there is no replacement string - it is
+ * "replaced" with the empty string.)
+ *
+ * If the -p option is specified and target_str is a filesystem path, the
+ * target string is expanded into the various filesystem path forms and the
+ * code attempts to replace (or clear) them all.
  */
 
 #include <algorithm>
@@ -56,10 +61,22 @@
 #include <vector>
 #include "cxxopts.hpp"
 
-extern "C" char *
-strnstr(const char *h, const char *n, size_t hlen);
 
-inline std::vector<std::string> expand_path_forms(const std::string &input) {
+class process_opts {
+    public:
+	bool binary_only = false;
+	bool binary_test_mode = false;
+	bool path_mode = false;
+	bool text_only = false;
+	bool verbose = false;
+	char clear_char = '\0';
+	std::set<std::string> tgt_strs;
+	std::string replace_str;
+};
+
+
+inline std::vector<std::string>
+expand_path_forms(const std::string &input) {
     namespace fs = std::filesystem;
     std::vector<std::string> forms;
     if (!input.length())
@@ -67,30 +84,30 @@ inline std::vector<std::string> expand_path_forms(const std::string &input) {
     forms.push_back(input); // Always include original
 
     try {
-        fs::path p(input);
-        if (fs::exists(p) && (fs::is_regular_file(p) || fs::is_symlink(p) || fs::is_directory(p))) {
-            // Absolute form
-            std::error_code ec;
-            auto abs = fs::absolute(p, ec).string();
-            if (!abs.empty() && abs != input) forms.push_back(abs);
+	fs::path p(input);
+	if (fs::exists(p) && (fs::is_regular_file(p) || fs::is_symlink(p) || fs::is_directory(p))) {
+	    // Absolute form
+	    std::error_code ec;
+	    auto abs = fs::absolute(p, ec).string();
+	    if (!abs.empty() && abs != input) forms.push_back(abs);
 
-            // Canonical form (resolves symlinks, may fail if not accessible)
-            ec.clear();
-            auto canon = fs::canonical(p, ec).string();
-            if (!ec && !canon.empty() && canon != input && canon != abs) forms.push_back(canon);
+	    // Canonical form (resolves symlinks, may fail if not accessible)
+	    ec.clear();
+	    auto canon = fs::canonical(p, ec).string();
+	    if (!ec && !canon.empty() && canon != input && canon != abs) forms.push_back(canon);
 
-            // Normalized (lexically, does not resolve symlinks)
-            auto norm = p.lexically_normal().string();
-            if (!norm.empty() && norm != input && norm != abs && norm != canon) forms.push_back(norm);
-        }
+	    // Normalized (lexically, does not resolve symlinks)
+	    auto norm = p.lexically_normal().string();
+	    if (!norm.empty() && norm != input && norm != abs && norm != canon) forms.push_back(norm);
+	}
     } catch (...) {
-        // Ignore errors (broken symlink, permission denied, etc).
+	// Ignore errors (broken symlink, permission denied, etc).
     }
     return forms;
 }
 
 int
-process_binary(std::string &fname, std::vector<std::string> &target_strs, char clear_char, bool verbose, bool path_mode)
+process_binary(std::map<std::string, int> &op_tally, const std::string &fname, process_opts &p)
 {
     // Read binary contents
     std::ifstream input_fs;
@@ -102,42 +119,26 @@ process_binary(std::string &fname, std::vector<std::string> &target_strs, char c
     std::vector<char> bin_contents(std::istreambuf_iterator<char>(input_fs), {});
     input_fs.close();
 
-    std::set<std::string> tgt_strs;
-    if (path_mode) {
-	for (const auto& t : target_strs) {
-	    auto expanded = expand_path_forms(t);
-	    tgt_strs.insert(expanded.begin(), expanded.end());
-	}
-    } else {
-	tgt_strs.insert(target_strs.begin(), target_strs.end());
-    }
-
-    // Set up vectors of target and array of null chars
-    int grcnt = 0;
+    // Process all target strings
+    bool changed = false;
     std::set<std::string>::iterator t_it;
-    for (t_it = tgt_strs.begin(); t_it != tgt_strs.end(); ++t_it) {
+    for (t_it = p.tgt_strs.begin(); t_it != p.tgt_strs.end(); ++t_it) {
 	std::vector<char> search_chars(t_it->begin(), t_it->end());
-	std::vector<char> null_chars(search_chars.size(), clear_char);
+	std::vector<char> null_chars(search_chars.size(), p.clear_char);
 
 	// Find instances of target string in binary, and replace any we find
 	auto position = bin_contents.begin();
-	int rcnt = 0;
 	while ((position = std::search(position, bin_contents.end(), search_chars.begin(), search_chars.end())) != bin_contents.end()) {
 	    std::copy(null_chars.begin(), null_chars.end(), position);
-	    rcnt++;
-	    if (verbose && rcnt == 1)
-		std::cout << fname << ":\n";
-	    if (verbose) {
-		std::string cchar(1, clear_char);
-		if (clear_char == '\0')
-		    cchar = std::string("\\0");
-		std::cout << "\tclearing instance #" << rcnt << " of " << *t_it << " with the '" << cchar << "' char\n";
-	    }
 	    position += search_chars.size();
+	    // For clear ops we count by decrementing so we know what to print
+	    // - a file is only cleared or replaced, not both, and a binary
+	    // file can only be cleared.
+	    op_tally[fname]--;
+	    changed = true;
 	}
-	grcnt += rcnt;
     }
-    if (!grcnt)
+    if (!changed)
 	return 0;
 
     // If we changed the contents, write them back out
@@ -145,7 +146,7 @@ process_binary(std::string &fname, std::vector<std::string> &target_strs, char c
     output_fs.open(fname, std::ios::binary);
     if (!output_fs.is_open()) {
 	std::cerr << "Unable to write updated file contents for " << fname << "\n";
-	return -1;
+	exit(-1);
     }
 
     std::copy(bin_contents.begin(), bin_contents.end(), std::ostreambuf_iterator<char>(output_fs));
@@ -155,26 +156,14 @@ process_binary(std::string &fname, std::vector<std::string> &target_strs, char c
 }
 
 int
-process_text(std::string &fname, std::string &target_str, std::string &replace_str, bool verbose, bool path_mode)
+process_text(std::map<std::string, int> &op_tally, const std::string &fname, process_opts &p)
 {
-    // Make sure the replacement doesn't contain the target.  If we need that
-    // we'll have to be more sophisticated about the replacement logic, but
-    // for now just be simple
-    auto loop_check = std::search(replace_str.begin(), replace_str.end(), target_str.begin(), target_str.end());
-    if (loop_check != replace_str.end()) {
-	std::cerr << "Replacement string \"" << replace_str << "\" contains target string \"" << target_str << "\" - unsupported.\n";
+    // Read text contents
+    std::ifstream input_fs(fname);
+    if (!input_fs.is_open()) {
+	std::cerr << "Unable to open file " << fname << "\n";
 	return -1;
     }
-
-    std::set<std::string> tgt_strs;
-    if (path_mode) {
-	auto expanded = expand_path_forms(target_str);
-	tgt_strs.insert(expanded.begin(), expanded.end());
-    } else {
-	tgt_strs.insert(target_str);
-    }
-
-    std::ifstream input_fs(fname);
     std::stringstream fbuffer;
     fbuffer << input_fs.rdbuf();
     std::string nfile_contents = fbuffer.str();
@@ -182,21 +171,22 @@ process_text(std::string &fname, std::string &target_str, std::string &replace_s
     if (!nfile_contents.length())
 	return 0;
 
+    // For replace ops we count by incrementing and clear opts we count by
+    // decrementing, so we know what to print in the tally.  A file is only
+    // cleared or replaced, not both, and which it is depends on the
+    // replacement string.
+    int rincr = (p.replace_str.length()) ? 1 : -1;
+
     // Use index and std::string::find for O(N) replacement
     bool changed = false;
     std::set<std::string>::iterator t_it;
-    for (t_it = tgt_strs.begin(); t_it != tgt_strs.end(); ++t_it) {
+    for (t_it = p.tgt_strs.begin(); t_it != p.tgt_strs.end(); ++t_it) {
 	size_t pos = 0;
-	int rcnt = 0;
 	while ((pos = nfile_contents.find(*t_it, pos)) != std::string::npos) {
-	    nfile_contents.replace(pos, t_it->size(), replace_str);
-	    rcnt++;
+	    nfile_contents.replace(pos, t_it->size(), p.replace_str);
+	    pos += p.replace_str.size();
+	    op_tally[fname] += rincr;
 	    changed = true;
-	    if (verbose && rcnt == 1)
-		std::cout << fname << ":\n";
-	    if (verbose)
-		std::cout << "\treplacing instance #" << rcnt << " of " << *t_it << " with " << replace_str << "\n";
-	    pos += replace_str.size();
 	}
     }
     if (!changed)
@@ -207,7 +197,7 @@ process_text(std::string &fname, std::string &target_str, std::string &replace_s
     output_fs.open(fname, std::ios::trunc);
     if (!output_fs.is_open()) {
 	std::cerr << "Unable to write updated file contents for " << fname << "\n";
-	return -1;
+	exit(-1);
     }
     output_fs << nfile_contents;
     output_fs.close();
@@ -215,7 +205,8 @@ process_text(std::string &fname, std::string &target_str, std::string &replace_s
 }
 
 // Text vs. binary file heuristic (generated with GPT-4.1 assistance)
-bool is_binary(std::ifstream &file, size_t max_check = 4096, double nontext_threshold = 0.1)
+bool
+is_binary(std::ifstream &file, size_t max_check = 4096, double nontext_threshold = 0.1)
 {
     size_t n_read = 0;
     size_t n_nontext = 0;
@@ -241,22 +232,51 @@ bool is_binary(std::ifstream &file, size_t max_check = 4096, double nontext_thre
     return (double)n_nontext / n_read > nontext_threshold;
 }
 
+void
+process_files(std::map<std::string, int> &op_tally, std::set<std::string> &files, process_opts &p)
+{
+    if (!p.tgt_strs.size())
+	return;
+
+    std::set<std::string>::iterator f_it;
+    for (f_it = files.begin(); f_it != files.end(); ++f_it) {
+	std::ifstream check_fs(*f_it, std::ios::binary);
+	if (!check_fs.is_open()) {
+	    std::cerr << "Error:  unable to open " << *f_it << "\n";
+	    exit(-1);
+	}
+	bool binary_mode = is_binary(check_fs);
+	check_fs.close();
+
+	if (binary_mode) {
+	    process_binary(op_tally, *f_it, p);
+	    continue;
+	}
+
+	process_text(op_tally, *f_it, p);
+    }
+}
+
 int
 main(int argc, const char *argv[])
 {
-    bool binary_mode = false;
+    process_opts p;
+    bool binary_only = false;
     bool binary_test_mode = false;
-    bool clear_mode = false;
-    char clear_char = '\0';
-    bool swap_mode = false;
-    bool text_mode = false;
     bool path_mode = false;
+    bool text_only = false;
     bool verbose = false;
+    char clear_char = '\0';
+    std::string file_list;
 
     cxxopts::Options options(argv[0],
 	    "A program to clear or replace strings in files.\n"
 	    "\n"
-	    "When the -p option is activated, a target string supplied for clearing\n"
+	    "strclear -B <filename>\n"
+	    "strclear <filename> <target_str> [replacement_str]\n"
+	    "strclear -f <filelist> <target_str> [replacement_str]\n"
+	    "\n"
+	    "When the -p option is added, a target string supplied for clearing\n"
 	    "or replacement appears to be a filesystem path (e.g., an existing file\n"
 	    "or directory), this tool will automatically search for and operate on\n"
 	    "all recognized forms of that path within the file. This includes:\n"
@@ -275,39 +295,25 @@ main(int argc, const char *argv[])
 	options
 	    .set_width(70)
 	    .add_options()
-	    ("B,is_binary","Test the file to see if it is a binary file.)", cxxopts::value<bool>(binary_test_mode))
-	    ("b,binary",   "Treat the input file as binary.  (Note that only string clearing is supported with binary files.)", cxxopts::value<bool>(binary_mode))
-	    ("c,clear",    "Replace strings in files by overwriting a specified character (defaults to NULL.)  Note: If the target string is a path and -p is specified, all equivalent path forms are processed.", cxxopts::value<bool>(clear_mode))
-	    ("clear_char", "Specify a character to use when clearing strings in files", cxxopts::value<char>(clear_char))
-	    ("r,replace",  "Replace one string with another (text mode only). Note: If the target string is a path and -p is specified, all equivalent path forms are processed.", cxxopts::value<bool>(swap_mode))
-	    ("p,paths",    "Expand a target string that is a file path into all recognized forms (original, absolute, canonical, normalized) for searching and replacing/clearing.", cxxopts::value<bool>(path_mode))
-	    ("t,text",     "Refuse to run unless the input file is a text file.", cxxopts::value<bool>(text_mode))
-	    ("v,verbose",  "Verbose reporting during processing", cxxopts::value<bool>(verbose))
-	    ("h,help",     "Print help")
+	    ("B,is_binary",   "Test the file to see if it is a binary file (return 1 if yes, 0 if no.)", cxxopts::value<bool>(p.binary_test_mode))
+	    ("t,text-only",   "Skip inputs that are binary files.", cxxopts::value<bool>(p.text_only))
+	    ("b,binary-only", "Skip inputs that are text files.", cxxopts::value<bool>(p.text_only))
+	    ("f,files",       "Provide a list of files to process.", cxxopts::value<std::string>(file_list))
+	    ("clear_char",    "Specify a character to use when clearing strings in files", cxxopts::value<char>(p.clear_char))
+	    ("p,paths",       "Expand a target string that is a file path into all recognized forms (original, absolute, canonical, normalized) for searching and replacing/clearing.", cxxopts::value<bool>(p.path_mode))
+	    ("v,verbose",     "Verbose reporting during processing", cxxopts::value<bool>(p.verbose))
+	    ("h,help",        "Print help")
 	    ;
 	auto result = options.parse(argc, argv);
 
-	nonopts = result.unmatched();
 
+	// Do we want help?
 	if (result.count("help")) {
 	    std::cout << options.help({""}) << std::endl;
 	    return 0;
 	}
 
-	if (binary_mode && text_mode) {
-	    std::cerr << "Error:  need to specify either binary or text mode, not both\n";
-	    return -1;
-	}
-
-	if (!clear_mode && !swap_mode && !binary_test_mode) {
-	    std::cerr << "Error:  need to specify either clear mode (-c), replace mode (-r), or binary file test mode (-B)\n";
-	    return -1;
-	}
-
-	if (clear_mode && swap_mode) {
-	    std::cerr << "Error:  need to specify either clear or replace mode, not both\n";
-	    return -1;
-	}
+	nonopts = result.unmatched();
     }
     catch (const cxxopts::exceptions::exception& e)
     {
@@ -315,70 +321,122 @@ main(int argc, const char *argv[])
 	return -1;
     }
 
-    // Unless the goal is strictly to test file type, we need at least two args
-    if (nonopts.size() < 2 && !binary_test_mode) {
+    /////////////////////////////////////////
+    // Do some option checking and validation
+    /////////////////////////////////////////
+
+
+    // binary_only ∩ text_only == NULL set
+    if (binary_only && text_only) {
+	std::cerr << "Error:  can specify binary-only or text-only, not both.\n";
 	std::cout << options.help({""}) << std::endl;
 	return -1;
     }
 
-    // If we only have a filename and a single string, the only thing we can
-    // do is treat the file as binary and replace the string
-    if (nonopts.size() == 2 && swap_mode) {
-	std::cerr << "Error:  string replacement mode indicated, but no replacement specified\n";
+    // If we're testing whether a file is binary, we only take one argument
+    if (binary_test_mode && nonopts.size() != 1) {
+	std::cerr << "Error:  -B accepts exactly one file path as input.\n";
+	std::cout << options.help({""}) << std::endl;
 	return -1;
     }
 
-    // For swap_mode, we need exactly 3 nonopts (file, target, replace)
-    if (swap_mode && nonopts.size() != 3) {
-       std::cerr << "Error:  replacing string in text file - need file, target string and replacement string as arguments.\n";
-       return -1;
+    // Everything else needs at least a filename or file list and a target string
+    if ((file_list.length() && !binary_only) && (nonopts.size() != 1 && nonopts.size() != 2)) {
+	std::cerr << "Error:  when using a file list we need a target string and (optionally) a replacement string.\n";
+	std::cout << options.help({""}) << std::endl;
+	return -1;
     }
-
-    std::string fname(nonopts[0]);
-
-    // Determine if the file is a binary or text file, if we've not been told
-    // to treat it as binary explicitly with -b.  If we've been told text mode
-    // we still check to make sure we really have a text file before processing.
-    if (!binary_mode) {
-	std::ifstream check_fs(fname, std::ios::binary);
-	if (!check_fs.is_open()) {
-	    std::cerr << "Error:  unable to open " << fname << "\n";
-	    return -1;
-	}
-	binary_mode = is_binary(check_fs);
+    if ((file_list.length() && binary_only) && (nonopts.size() != 1)) {
+	std::cerr << "Error:  when using a file list and binary-only filtering we only accept a target string and (optionally) a --clear-char character - using a full replacement string isn't supported.\n";
+	std::cout << options.help({""}) << std::endl;
+	return -1;
     }
-
-    // If all we're supposed to do is determine the type, return success (0) if
-    // the file is binary, else 1
-    if (binary_test_mode)
-	return (binary_mode) ? 0 : 1;
-
-    if (binary_mode && swap_mode) {
-	std::cerr << "Error:  string replacement indicated, but file is binary\n";
+    if ((!file_list.length() && !binary_only) && (nonopts.size() != 2 && nonopts.size() != 3)) {
+	std::cerr << "Error:  we need a file, a target string and (optionally) a replacement string.\n";
+	std::cout << options.help({""}) << std::endl;
+	return -1;
+    }
+    if ((!file_list.length() && binary_only) && (nonopts.size() != 2)) {
+	std::cerr << "Error:  when in binary-only mode we only accept a filename, a target string and (optionally) a --clear-char character - using a full replacement string isn't supported.\n";
 	return -1;
     }
 
-    // If we're in binary mode we're just nulling out the target string(s).
-    if (binary_mode) {
-	std::vector<std::string> target_strs;
-	for (size_t i = 1; i < nonopts.size(); i++) {
-	    if (nonopts[i].length())
-		target_strs.push_back(nonopts[i]);
-	}
-	if (!target_strs.size()) {
-	    std::cerr << "Target strings cannot be empty.\n";
+    std::set<std::string> files;
+    std::string target_str;
+    if (!file_list.length()) {
+	files.insert(nonopts[0]);
+	target_str = nonopts[1];
+	p.replace_str = (nonopts.size() > 2) ? std::string(nonopts[2]) : std::string("");
+    } else {
+	std::ifstream instream(file_list);
+	if (!instream.is_open()) {
+	    std::cerr << "Error: Could not open " << file_list << "\n";
 	    return -1;
 	}
-	return process_binary(fname, target_strs, clear_char, verbose, path_mode);
+	std::string line;
+	while (std::getline(instream, line))
+	    files.insert(line);
+	instream.close();
+
+	target_str = nonopts[0];
+	p.replace_str = (nonopts.size() > 1) ? std::string(nonopts[1]) : std::string("");
     }
 
-    std::string target_str(nonopts[1]);
     if (!target_str.length()) {
-	std::cerr << "Target string cannot be empty.\n";
+	std::cerr << "Error: empty target string supplied\n";
 	return -1;
     }
-    std::string replace_str = (swap_mode) ? std::string(nonopts[2]) : std::string("");
-    return process_text(fname, target_str, replace_str, verbose, path_mode);
+
+    std::set<std::string> tgt_strs;
+    if (path_mode) {
+	auto expanded = expand_path_forms(target_str);
+	p.tgt_strs.insert(expanded.begin(), expanded.end());
+    } else {
+	p.tgt_strs.insert(target_str);
+    }
+
+    std::map<std::string, int> op_tally;
+    process_files(op_tally, files, p);
+
+    if (p.verbose) {
+	if (op_tally.size()) {
+	    std::string cchar(1, clear_char);
+	    if (clear_char == '\0')
+		cchar = std::string("\\0");
+
+	    std::cout << "Summary:\n";
+	    std::cout << "    Original target string: " << target_str << "\n";
+	    if (path_mode) {
+		std::cout << "    Expanded path targets: \n";
+		std::set<std::string>::iterator t_it;
+		for (t_it = p.tgt_strs.begin(); t_it != p.tgt_strs.end(); ++t_it) {
+		    if (*t_it == target_str)
+			continue;
+		    std::cout << "                  : " << *t_it << "\n";
+		}
+	    }
+	    if (p.clear_char != '\0')
+		std::cout << "            Clear char: " << p.clear_char << "\n";
+	    if (p.replace_str.length())
+		std::cout << "    Replacement string: " << p.replace_str << "\n";
+
+	    std::cout << "----------Processed Paths-------\n";
+
+	    // print tally
+	    std::map<std::string, int>::iterator o_it;
+	    for (o_it = op_tally.begin(); o_it != op_tally.end(); ++o_it) {
+		std::cout << o_it->first << ": ";
+		if (o_it->second < 0) {
+		    std::cout << " cleared " << -1*o_it->second << " instances\n";
+		} else {
+		    std::cout << "replaced " << o_it->second << " instances\n";
+		}
+	    }
+	} else {
+	    std::cout << "No matches found\n";
+	}
+    }
+    return 0;
 }
 
 // Local Variables:
