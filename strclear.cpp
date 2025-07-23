@@ -50,14 +50,18 @@
  */
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <map>
+#include <mutex>
 #include <sstream>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 #include "cxxopts.hpp"
 
@@ -107,20 +111,22 @@ expand_path_forms(const std::string &input) {
 }
 
 int
-process_binary(std::map<std::string, int> &op_tally, const std::string &fname, process_opts &p)
+process_binary(const std::string &fname, process_opts &p)
 {
+    // Keep track of how many times we change the file - that's our return code
+    int change_cnt = 0;
+
     // Read binary contents
     std::ifstream input_fs;
     input_fs.open(fname, std::ios::binary);
     if (!input_fs.is_open()) {
 	std::cerr << "Unable to open file " << fname << "\n";
-	return -1;
+	return change_cnt;
     }
     std::vector<char> bin_contents(std::istreambuf_iterator<char>(input_fs), {});
     input_fs.close();
 
     // Process all target strings
-    bool changed = false;
     std::set<std::string>::iterator t_it;
     for (t_it = p.tgt_strs.begin(); t_it != p.tgt_strs.end(); ++t_it) {
 	std::vector<char> search_chars(t_it->begin(), t_it->end());
@@ -134,11 +140,10 @@ process_binary(std::map<std::string, int> &op_tally, const std::string &fname, p
 	    // For clear ops we count by decrementing so we know what to print
 	    // - a file is only cleared or replaced, not both, and a binary
 	    // file can only be cleared.
-	    op_tally[fname]--;
-	    changed = true;
+	    change_cnt--;
 	}
     }
-    if (!changed)
+    if (change_cnt == 0)
 	return 0;
 
     // If we changed the contents, write them back out
@@ -146,30 +151,33 @@ process_binary(std::map<std::string, int> &op_tally, const std::string &fname, p
     output_fs.open(fname, std::ios::binary);
     if (!output_fs.is_open()) {
 	std::cerr << "Unable to write updated file contents for " << fname << "\n";
-	exit(-1);
+	return change_cnt;
     }
 
     std::copy(bin_contents.begin(), bin_contents.end(), std::ostreambuf_iterator<char>(output_fs));
     output_fs.close();
 
-    return 0;
+    return change_cnt;
 }
 
 int
-process_text(std::map<std::string, int> &op_tally, const std::string &fname, process_opts &p)
+process_text(const std::string &fname, process_opts &p)
 {
+    // Keep track of how many times we change the file - that's our return code
+    int change_cnt = 0;
+
     // Read text contents
     std::ifstream input_fs(fname);
     if (!input_fs.is_open()) {
 	std::cerr << "Unable to open file " << fname << "\n";
-	return -1;
+	return change_cnt;
     }
     std::stringstream fbuffer;
     fbuffer << input_fs.rdbuf();
     std::string nfile_contents = fbuffer.str();
     input_fs.close();
     if (!nfile_contents.length())
-	return 0;
+	return change_cnt;
 
     // For replace ops we count by incrementing and clear opts we count by
     // decrementing, so we know what to print in the tally.  A file is only
@@ -178,18 +186,16 @@ process_text(std::map<std::string, int> &op_tally, const std::string &fname, pro
     int rincr = (p.replace_str.length()) ? 1 : -1;
 
     // Use index and std::string::find for O(N) replacement
-    bool changed = false;
     std::set<std::string>::iterator t_it;
     for (t_it = p.tgt_strs.begin(); t_it != p.tgt_strs.end(); ++t_it) {
 	size_t pos = 0;
 	while ((pos = nfile_contents.find(*t_it, pos)) != std::string::npos) {
 	    nfile_contents.replace(pos, t_it->size(), p.replace_str);
 	    pos += p.replace_str.size();
-	    op_tally[fname] += rincr;
-	    changed = true;
+	    change_cnt += rincr;
 	}
     }
-    if (!changed)
+    if (change_cnt == 0)
 	return 0;
 
     // If we changed the contents, write them back out
@@ -201,7 +207,7 @@ process_text(std::map<std::string, int> &op_tally, const std::string &fname, pro
     }
     output_fs << nfile_contents;
     output_fs.close();
-    return 0;
+    return change_cnt;
 }
 
 // Text vs. binary file heuristic (generated with GPT-4.1 assistance)
@@ -233,27 +239,46 @@ is_binary(std::ifstream &file, size_t max_check = 4096, double nontext_threshold
 }
 
 void
-process_files(std::map<std::string, int> &op_tally, std::set<std::string> &files, process_opts &p)
+process_files(std::map<std::string, std::atomic<int>> &op_tally, std::set<std::string> &files, process_opts &p)
 {
     if (!p.tgt_strs.size())
 	return;
 
-    std::set<std::string>::iterator f_it;
-    for (f_it = files.begin(); f_it != files.end(); ++f_it) {
-	std::ifstream check_fs(*f_it, std::ios::binary);
+    std::set<std::string> setq = files;
+
+    auto worker = [&](const std::string &fname) {
+	std::ifstream check_fs(fname, std::ios::binary);
 	if (!check_fs.is_open()) {
-	    std::cerr << "Error:  unable to open " << *f_it << "\n";
-	    exit(-1);
+	    std::cerr << "Error:  unable to open " << fname << "\n";
+	    return;
 	}
 	bool binary_mode = is_binary(check_fs);
 	check_fs.close();
 
+	int result = 0;
 	if (binary_mode) {
-	    process_binary(op_tally, *f_it, p);
-	    continue;
+	    result = process_binary(fname, p);
+	} else {
+	    result = process_text(fname, p);
+	}
+	op_tally[fname] = result;
+    };
+
+    int max_thread_cnt = 12;
+    while (!setq.empty()) {
+	std::set<std::string> wset;
+	while (!setq.empty() && wset.size() < max_thread_cnt) {
+	    wset.insert(*setq.begin());
+	    setq.erase(setq.begin());
 	}
 
-	process_text(op_tally, *f_it, p);
+	std::vector<std::thread> threads;
+	for (const auto &fname : wset) {
+	    threads.emplace_back(worker, fname);
+	}
+	for (auto &t : threads) {
+	    t.join();
+	}
     }
 }
 
@@ -297,7 +322,7 @@ main(int argc, const char *argv[])
 	    .add_options()
 	    ("B,is_binary",   "Test the file to see if it is a binary file (return 1 if yes, 0 if no.)", cxxopts::value<bool>(p.binary_test_mode))
 	    ("t,text-only",   "Skip inputs that are binary files.", cxxopts::value<bool>(p.text_only))
-	    ("b,binary-only", "Skip inputs that are text files.", cxxopts::value<bool>(p.text_only))
+	    ("b,binary-only", "Skip inputs that are text files.", cxxopts::value<bool>(p.binary_only))
 	    ("f,files",       "Provide a list of files to process.", cxxopts::value<std::string>(file_list))
 	    ("clear_char",    "Specify a character to use when clearing strings in files", cxxopts::value<char>(p.clear_char))
 	    ("p,paths",       "Expand a target string that is a file path into all recognized forms (original, absolute, canonical, normalized) for searching and replacing/clearing.", cxxopts::value<bool>(p.path_mode))
@@ -395,7 +420,7 @@ main(int argc, const char *argv[])
 	p.tgt_strs.insert(target_str);
     }
 
-    std::map<std::string, int> op_tally;
+    std::map<std::string, std::atomic<int>> op_tally;
     process_files(op_tally, files, p);
 
     if (p.verbose) {
@@ -423,7 +448,7 @@ main(int argc, const char *argv[])
 	    std::cout << "----------Processed Paths-------\n";
 
 	    // print tally
-	    std::map<std::string, int>::iterator o_it;
+	    std::map<std::string, std::atomic<int>>::iterator o_it;
 	    for (o_it = op_tally.begin(); o_it != op_tally.end(); ++o_it) {
 		std::cout << o_it->first << ": ";
 		if (o_it->second < 0) {
