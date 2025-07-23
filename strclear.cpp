@@ -46,10 +46,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <sstream>
+#include <set>
 #include <string>
 #include <vector>
 #include "cxxopts.hpp"
@@ -58,8 +60,38 @@
 extern "C" char *
 strnstr(const char *h, const char *n, size_t hlen);
 
+inline std::vector<std::string> expand_path_forms(const std::string &input) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> forms;
+    if (!input.length())
+	return forms;
+    forms.push_back(input); // Always include original
+
+    try {
+        fs::path p(input);
+        if (fs::exists(p) && (fs::is_regular_file(p) || fs::is_symlink(p) || fs::is_directory(p))) {
+            // Absolute form
+            std::error_code ec;
+            auto abs = fs::absolute(p, ec).string();
+            if (!abs.empty() && abs != input) forms.push_back(abs);
+
+            // Canonical form (resolves symlinks, may fail if not accessible)
+            ec.clear();
+            auto canon = fs::canonical(p, ec).string();
+            if (!ec && !canon.empty() && canon != input && canon != abs) forms.push_back(canon);
+
+            // Normalized (lexically, does not resolve symlinks)
+            auto norm = p.lexically_normal().string();
+            if (!norm.empty() && norm != input && norm != abs && norm != canon) forms.push_back(norm);
+        }
+    } catch (...) {
+        // Ignore errors (broken symlink, permission denied, etc).
+    }
+    return forms;
+}
+
 int
-process_binary(std::string &fname, std::vector<std::string> &target_strs, char clear_char, bool verbose)
+process_binary(std::string &fname, std::vector<std::string> &target_strs, char clear_char, bool verbose, bool path_mode)
 {
     // Read binary contents
     std::ifstream input_fs;
@@ -71,10 +103,21 @@ process_binary(std::string &fname, std::vector<std::string> &target_strs, char c
     std::vector<char> bin_contents(std::istreambuf_iterator<char>(input_fs), {});
     input_fs.close();
 
+    std::set<std::string> tgt_strs;
+    if (path_mode) {
+	for (const auto& t : target_strs) {
+	    auto expanded = expand_path_forms(t);
+	    tgt_strs.insert(expanded.begin(), expanded.end());
+	}
+    } else {
+	tgt_strs.insert(target_strs.begin(), target_strs.end());
+    }
+
     // Set up vectors of target and array of null chars
     int grcnt = 0;
-    for (size_t i = 0; i < target_strs.size(); i++) {
-	std::vector<char> search_chars(target_strs[i].begin(), target_strs[i].end());
+    std::set<std::string>::iterator t_it;
+    for (t_it = tgt_strs.begin(); t_it != tgt_strs.end(); ++t_it) {
+	std::vector<char> search_chars(t_it->begin(), t_it->end());
 	std::vector<char> null_chars(search_chars.size(), clear_char);
 
 	// Find instances of target string in binary, and replace any we find
@@ -89,7 +132,7 @@ process_binary(std::string &fname, std::vector<std::string> &target_strs, char c
 		std::string cchar(1, clear_char);
 		if (clear_char == '\0')
 		    cchar = std::string("\\0");
-		std::cout << "\tclearing instance #" << rcnt << " of " << target_strs[i] << " with the '" << cchar << "' char\n";
+		std::cout << "\tclearing instance #" << rcnt << " of " << *t_it << " with the '" << cchar << "' char\n";
 	    }
 	    position += search_chars.size();
 	}
@@ -113,7 +156,7 @@ process_binary(std::string &fname, std::vector<std::string> &target_strs, char c
 }
 
 int
-process_text(std::string &fname, std::string &target_str, std::string &replace_str, bool verbose)
+process_text(std::string &fname, std::string &target_str, std::string &replace_str, bool verbose, bool path_mode)
 {
     // Make sure the replacement doesn't contain the target.  If we need that
     // we'll have to be more sophisticated about the replacement logic, but
@@ -124,12 +167,28 @@ process_text(std::string &fname, std::string &target_str, std::string &replace_s
 	return -1;
     }
 
+    std::set<std::string> tgt_strs;
+    if (path_mode) {
+	auto expanded = expand_path_forms(target_str);
+	tgt_strs.insert(expanded.begin(), expanded.end());
+    } else {
+	tgt_strs.insert(target_str);
+    }
+
     // See if the target string is present
-    MappedFile *mf = new MappedFile(fname.c_str());
-    bool process = true;
-    if (mf && mf->buf && !strnstr((const char *)mf->buf, target_str.c_str(), mf->buflen))
-	process = false;
-    delete mf;
+    MappedFile mf(fname.c_str());
+    if (!mf.buf) {
+	std::cerr << "Error: could not open " << fname << "\n";
+	return -1;
+    }
+    std::set<std::string>::iterator t_it;
+    bool process = false;
+    for (t_it = tgt_strs.begin(); t_it != tgt_strs.end(); ++t_it) {
+	if (strnstr((const char *)mf.buf, t_it->c_str(), mf.buflen)) {
+	    process = true;
+	    break;
+	}
+    }
     if (!process)
 	return 0;
 
@@ -142,18 +201,22 @@ process_text(std::string &fname, std::string &target_str, std::string &replace_s
 	return 0;
 
     // Use index and std::string::find for O(N) replacement
-    size_t pos = 0;
-    int rcnt = 0;
-    while ((pos = nfile_contents.find(target_str, pos)) != std::string::npos) {
-	nfile_contents.replace(pos, target_str.size(), replace_str);
-	rcnt++;
-	if (verbose && rcnt == 1)
-	    std::cout << fname << ":\n";
-	if (verbose)
-	    std::cout << "\treplacing instance #" << rcnt << " of " << target_str << " with " << replace_str << "\n";
-	pos += replace_str.size();
+    bool changed = false;
+    for (t_it = tgt_strs.begin(); t_it != tgt_strs.end(); ++t_it) {
+	size_t pos = 0;
+	int rcnt = 0;
+	while ((pos = nfile_contents.find(*t_it, pos)) != std::string::npos) {
+	    nfile_contents.replace(pos, t_it->size(), replace_str);
+	    rcnt++;
+	    changed = true;
+	    if (verbose && rcnt == 1)
+		std::cout << fname << ":\n";
+	    if (verbose)
+		std::cout << "\treplacing instance #" << rcnt << " of " << *t_it << " with " << replace_str << "\n";
+	    pos += replace_str.size();
+	}
     }
-    if (!rcnt)
+    if (!changed)
 	return 0;
 
     // If we changed the contents, write them back out
@@ -204,9 +267,23 @@ main(int argc, const char *argv[])
     char clear_char = '\0';
     bool swap_mode = false;
     bool text_mode = false;
+    bool path_mode = false;
     bool verbose = false;
 
-    cxxopts::Options options(argv[0], "A program to clear or replace strings in files\n");
+    cxxopts::Options options(argv[0],
+	    "A program to clear or replace strings in files.\n"
+	    "\n"
+	    "When the -p option is activated, a target string supplied for clearing\n"
+	    "or replacement appears to be a filesystem path (e.g., an existing file\n"
+	    "or directory), this tool will automatically search for and operate on\n"
+	    "all recognized forms of that path within the file. This includes:\n"
+	    "  - the original path string as supplied\n"
+	    "  - its absolute path form\n"
+	    "  - its canonical (fully resolved, with symlinks removed) form\n"
+	    "  - its normalized (syntactically simplified) form\n"
+	    "This ensures that both relative and absolute references, as well as\n"
+	    "symlinked and normalized forms of the same file, are detected and processed.\n"
+	    );
 
     std::vector<std::string> nonopts;
 
@@ -217,9 +294,10 @@ main(int argc, const char *argv[])
 	    .add_options()
 	    ("B,is_binary","Test the file to see if it is a binary file.)", cxxopts::value<bool>(binary_test_mode))
 	    ("b,binary",   "Treat the input file as binary.  (Note that only string clearing is supported with binary files.)", cxxopts::value<bool>(binary_mode))
-	    ("c,clear",    "Replace strings in files by overwriting a specified character (defaults to NULL)", cxxopts::value<bool>(clear_mode))
+	    ("c,clear",    "Replace strings in files by overwriting a specified character (defaults to NULL.)  Note: If the target string is a path and -p is specified, all equivalent path forms are processed.", cxxopts::value<bool>(clear_mode))
 	    ("clear_char", "Specify a character to use when clearing strings in files", cxxopts::value<char>(clear_char))
-	    ("r,replace",  "Replace one string with another (text mode only).", cxxopts::value<bool>(swap_mode))
+	    ("r,replace",  "Replace one string with another (text mode only). Note: If the target string is a path and -p is specified, all equivalent path forms are processed.", cxxopts::value<bool>(swap_mode))
+	    ("p,paths",    "Expand a target string that is a file path into all recognized forms (original, absolute, canonical, normalized) for searching and replacing/clearing.", cxxopts::value<bool>(path_mode))
 	    ("t,text",     "Refuse to run unless the input file is a text file.", cxxopts::value<bool>(text_mode))
 	    ("v,verbose",  "Verbose reporting during processing", cxxopts::value<bool>(verbose))
 	    ("h,help",     "Print help")
@@ -301,14 +379,23 @@ main(int argc, const char *argv[])
     if (binary_mode) {
 	std::vector<std::string> target_strs;
 	for (size_t i = 1; i < nonopts.size(); i++) {
-	    target_strs.push_back(nonopts[i]);
+	    if (nonopts[i].length())
+		target_strs.push_back(nonopts[i]);
 	}
-	return process_binary(fname, target_strs, clear_char, verbose);
+	if (!target_strs.size()) {
+	    std::cerr << "Target strings cannot be empty.\n";
+	    return -1;
+	}
+	return process_binary(fname, target_strs, clear_char, verbose, path_mode);
     }
 
     std::string target_str(nonopts[1]);
+    if (!target_str.length()) {
+	std::cerr << "Target string cannot be empty.\n";
+	return -1;
+    }
     std::string replace_str = (swap_mode) ? std::string(nonopts[2]) : std::string("");
-    return process_text(fname, target_str, replace_str, verbose);
+    return process_text(fname, target_str, replace_str, verbose, path_mode);
 }
 
 // Local Variables:
