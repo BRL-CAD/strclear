@@ -1,0 +1,2 @@
+This is a test string foo and bar.
+Another foo here.

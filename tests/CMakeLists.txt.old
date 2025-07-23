@@ -2,18 +2,6 @@
 #                strclear tests
 ###################################################
 
-# --- Testdata staging requirements ---
-# (plain.txt, withpaths.txt, relpath.txt, abspath.txt, target.txt, withsymlink.txt, no_match.txt,
-# multi.txt, emptysearch.txt, onlysearch.txt, cclear.bin)
-# Place these in testdata/ in the same directory as this CMakeLists.txt
-
-# --- CMake scripts for custom staging ---
-# make_large_file.cmake: create ${TESTDIR}/large.txt with lots of "foo"
-# stage_mixed_list.cmake: create mixed1.txt, mixed2.txt, mixed3.txt, mixedbin.bin, mixed_files.txt
-# stage_parallel_list.cmake: create par1.txt ... par20.txt, parallel_files.txt
-# stage_filter_list.cmake: create text1.txt, text2.txt, bin1.bin, bin2.bin, filter_files.txt
-
-
 # Directory for test artifacts
 set(TESTDIR "${CMAKE_CURRENT_BINARY_DIR}/testfiles")
 file(MAKE_DIRECTORY "${TESTDIR}")
@@ -37,174 +25,240 @@ function(assert_file_not_contains file unexpected_text)
 endfunction()
 
 # --- Test 1: Non-filesystem string replace ---
+set(TEXT1 "This is a test string foo and bar.\nAnother foo here.")
+set(FILE1 "${TESTDIR}/plain.txt")
+file(WRITE "${FILE1}" "${TEXT1}")
+
 add_test(NAME BasicStringReplace
-  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR}
-  -DSTRCLEAR=$<TARGET_FILE:strclear>
-  -P "${CMAKE_CURRENT_SOURCE_DIR}/01_basic_string_replace.cmake"
+  COMMAND strclear -v "${FILE1}" foo baz
+)
+set_tests_properties(BasicStringReplace PROPERTIES
+  FIXTURES_SETUP basic_replace
+)
+
+add_test(NAME VerifyBasicStringReplace
+  COMMAND ${CMAKE_COMMAND} -Dfile=${FILE1} -Dexpected=baz -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+)
+set_tests_properties(VerifyBasicStringReplace PROPERTIES
+  FIXTURES_REQUIRED basic_replace
 )
 
 # --- Test 2: Path expansion (filesystem) ---
-set(WITHPATHS_INPUT "${TESTDIR}/withpaths.txt.in")
 set(REL_PATH "relpath.txt")
 set(ABS_PATH "${TESTDIR}/abspath.txt")
+set(FILE2 "${TESTDIR}/withpaths.txt")
+
 get_filename_component(ABS_PATH_FOR_FILE "${ABS_PATH}" ABSOLUTE)
-set(WITHPATHS_TXT "Here is a path: ${REL_PATH}\nAnd here is another: ${ABS_PATH_FOR_FILE}\n")
-file(WRITE "${WITHPATHS_INPUT}" "${WITHPATHS_TXT}")
+set(TEXT2 "Here is a path: ${REL_PATH}\nAnd here is another: ${ABS_PATH_FOR_FILE}\n")
+file(WRITE "${FILE2}" "${TEXT2}")
+
+file(WRITE "${TESTDIR}/${REL_PATH}" "dummy")
+file(WRITE "${ABS_PATH}" "dummy")
 
 add_test(NAME PathExpansionReplace
-  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR}
-  -DSTRCLEAR=$<TARGET_FILE:strclear>
-  -P "${CMAKE_CURRENT_SOURCE_DIR}/02_path_expansion.cmake"
+  COMMAND strclear -v -p "${FILE2}" "${REL_PATH}" CLEARED
+)
+set_tests_properties(PathExpansionReplace PROPERTIES
+  FIXTURES_SETUP path_replace
 )
 
-if(0)
+add_test(NAME VerifyPathExpansionReplace
+  COMMAND ${CMAKE_COMMAND} -Dfile=${FILE2} -Dexpected=CLEARED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+)
+set_tests_properties(VerifyPathExpansionReplace PROPERTIES
+  FIXTURES_REQUIRED path_replace
+)
+
 # --- Test 3: Symlink path expansion ---
-set(SRC_FILE "${TESTDIR}/target.txt.in")
+set(SRC_FILE "${TESTDIR}/target.txt")
 set(SYM_PATH "${TESTDIR}/symlink.txt")
-set(FILE3 "${TESTDIR}/withsymlink.txt.in")
+set(FILE3 "${TESTDIR}/withsymlink.txt")
 set(TEXT3 "Original: ${SRC_FILE}\nSymlink: ${SYM_PATH}\n")
 file(WRITE "${FILE3}" "${TEXT3}")
 file(WRITE "${SRC_FILE}" "dummy")
 
+file(CREATE_LINK "${SRC_FILE}" "${SYM_PATH}" SYMBOLIC)
+
 add_test(NAME SymlinkPathExpansionReplace
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SRC_FILE}" "${TESTDIR}/target.txt"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FILE3}" "${TESTDIR}/withsymlink.txt"
-  COMMAND ${CMAKE_COMMAND} -E remove -f "${TESTDIR}/symlink.txt"
-  COMMAND ${CMAKE_COMMAND} -E create_symlink "${TESTDIR}/target.txt" "${TESTDIR}/symlink.txt"
-  COMMAND strclear -v -p "${TESTDIR}/withsymlink.txt" "${TESTDIR}/symlink.txt" "CLEAN"
+  COMMAND strclear -v -p "${FILE3}" "${SYM_PATH}" "CLEAN"
 )
 set_tests_properties(SymlinkPathExpansionReplace PROPERTIES
   FIXTURES_SETUP symlink_replace
 )
 
 add_test(NAME VerifySymlinkPathExpansionReplace
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/withsymlink.txt -Dexpected=CLEAN -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${FILE3} -Dexpected=CLEAN -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifySymlinkPathExpansionReplace PROPERTIES
   FIXTURES_REQUIRED symlink_replace
 )
 
 # --- Test 4: No Replacement Occurs ---
+set(FILE_NOMATCH "${TESTDIR}/no_match.txt")
+set(TEXT_NOMATCH "Just a normal text file.")
+file(WRITE "${FILE_NOMATCH}" "${TEXT_NOMATCH}")
+
 add_test(NAME NoReplacementIfNoMatch
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_LIST_DIR}/testdata/no_match.txt" "${TESTDIR}/no_match.txt"
-  COMMAND strclear -v "${TESTDIR}/no_match.txt" "foo" "bar"
+  COMMAND strclear -v "${FILE_NOMATCH}" "foo" "bar"
 )
 set_tests_properties(NoReplacementIfNoMatch PROPERTIES
   FIXTURES_SETUP no_replace
 )
 
 add_test(NAME VerifyNoReplacementIfNoMatch
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/no_match.txt -Dexpected="Just a normal text file." -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_NOMATCH} -Dexpected=${TEXT_NOMATCH} -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyNoReplacementIfNoMatch PROPERTIES
   FIXTURES_REQUIRED no_replace
 )
 
 # --- Test 5: Multiple Occurrences ---
+set(FILE_MULTI "${TESTDIR}/multi.txt")
+set(TEXT_MULTI "foo bar foo baz foo")
+file(WRITE "${FILE_MULTI}" "${TEXT_MULTI}")
+
 add_test(NAME MultipleReplacements
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_LIST_DIR}/testdata/multi.txt" "${TESTDIR}/multi.txt"
-  COMMAND strclear -v "${TESTDIR}/multi.txt" foo CLEARED
+  COMMAND strclear -v "${FILE_MULTI}" foo CLEARED
 )
 set_tests_properties(MultipleReplacements PROPERTIES
   FIXTURES_SETUP multi_replace
 )
 
 add_test(NAME VerifyMultipleReplacements
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/multi.txt -Dexpected=CLEARED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_MULTI} -Dexpected=CLEARED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyMultipleReplacements PROPERTIES
   FIXTURES_REQUIRED multi_replace
 )
 
 # --- Test 6: Empty Search String (should fail) ---
+set(FILE_EMPTYSEARCH "${TESTDIR}/emptysearch.txt")
+file(WRITE "${FILE_EMPTYSEARCH}" "some text")
+
 add_test(NAME EmptySearchString
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_LIST_DIR}/testdata/emptysearch.txt" "${TESTDIR}/emptysearch.txt"
-  COMMAND strclear -v "${TESTDIR}/emptysearch.txt" "" replacement
+  COMMAND strclear -v "${FILE_EMPTYSEARCH}" "" replacement
 )
 set_tests_properties(EmptySearchString PROPERTIES
   WILL_FAIL TRUE
 )
 
 # --- Test 7: File with Only Search String ---
+set(FILE_ONLYSEARCH "${TESTDIR}/onlysearch.txt")
+file(WRITE "${FILE_ONLYSEARCH}" "foo")
+
 add_test(NAME OnlySearchString
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_LIST_DIR}/testdata/onlysearch.txt" "${TESTDIR}/onlysearch.txt"
-  COMMAND strclear -v "${TESTDIR}/onlysearch.txt" foo gone
+  COMMAND strclear -v "${FILE_ONLYSEARCH}" foo gone
 )
 set_tests_properties(OnlySearchString PROPERTIES
   FIXTURES_SETUP onlysearch_replace
 )
 
 add_test(NAME VerifyOnlySearchString
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/onlysearch.txt -Dexpected=gone -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_ONLYSEARCH} -Dexpected=gone -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyOnlySearchString PROPERTIES
   FIXTURES_REQUIRED onlysearch_replace
 )
 
-# --- Test 8: Large File Replacement (self-staged) ---
+# --- Test 8: Large File Replacement ---
+set(FILE_LARGE "${TESTDIR}/large.txt")
+set(SEARCH_LARGE "foo")
+set(REPLACE_LARGE "bar")
+file(WRITE "${FILE_LARGE}" "")
+foreach(i RANGE 1 1000)
+  file(APPEND "${FILE_LARGE}" "foo this is line ${i}\n")
+endforeach()
+
 add_test(NAME LargeFileReplacement
-  COMMAND ${CMAKE_COMMAND} -E remove -f "${TESTDIR}/large.txt"
-  COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_LIST_DIR}/make_large_file.cmake"
-  COMMAND strclear -v "${TESTDIR}/large.txt" foo bar
+  COMMAND strclear -v "${FILE_LARGE}" foo bar
 )
 set_tests_properties(LargeFileReplacement PROPERTIES
   FIXTURES_SETUP large_replace
 )
 
 add_test(NAME VerifyLargeFileReplacement
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/large.txt -Dexpected=bar -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_LARGE} -Dexpected=bar -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyLargeFileReplacement PROPERTIES
   FIXTURES_REQUIRED large_replace
 )
 
-# --- Test 9: Mixed Input List via --files option ---
+# --- Test 9: Mixed Input List via --files option (parallel, clears/replaces, text & binary) ---
+# Create text files and a binary file
+set(FILE_MIXED1 "${TESTDIR}/mixed1.txt")
+set(FILE_MIXED2 "${TESTDIR}/mixed2.txt")
+set(FILE_MIXED3 "${TESTDIR}/mixed3.txt")
+set(FILE_MIXEDBIN "${TESTDIR}/mixedbin.bin")
+set(FILE_MIXEDLIST "${TESTDIR}/mixed_files.txt")
+
+file(WRITE "${FILE_MIXED1}" "alpha foo beta\nfoo gamma\n")
+file(WRITE "${FILE_MIXED2}" "foo delta\nfoo epsilon\n")
+file(WRITE "${FILE_MIXED3}" "zeta foo eta\n")
+file(WRITE "${FILE_MIXEDLIST}" "${FILE_MIXED1}\n${FILE_MIXED2}\n${FILE_MIXED3}\n${FILE_MIXEDBIN}\n")
+# Copy a binary file containing "foo" at a known offset into place for clear test
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/binary1.bin ${TESTDIR})
+file(RENAME ${TESTDIR}/binary1.bin ${FILE_MIXEDBIN})
+
 add_test(NAME MixedInputListReplace
-  COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_LIST_DIR}/stage_mixed_list.cmake"
-  COMMAND strclear -v --files "${TESTDIR}/mixed_files.txt" foo REPLACED
+  COMMAND strclear -v --files "${FILE_MIXEDLIST}" foo REPLACED
 )
 set_tests_properties(MixedInputListReplace PROPERTIES
   FIXTURES_SETUP mixed_replace
 )
 
 add_test(NAME VerifyMixedInputListReplace1
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/mixed1.txt -Dexpected=REPLACED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_MIXED1} -Dexpected=REPLACED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyMixedInputListReplace1 PROPERTIES
   FIXTURES_REQUIRED mixed_replace
 )
+
 add_test(NAME VerifyMixedInputListReplace2
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/mixed2.txt -Dexpected=REPLACED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_MIXED2} -Dexpected=REPLACED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyMixedInputListReplace2 PROPERTIES
   FIXTURES_REQUIRED mixed_replace
 )
+
 add_test(NAME VerifyMixedInputListReplace3
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/mixed3.txt -Dexpected=REPLACED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_MIXED3} -Dexpected=REPLACED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyMixedInputListReplace3 PROPERTIES
   FIXTURES_REQUIRED mixed_replace
 )
+
+# For binary file, check that the original "foo" is no longer present
 add_test(NAME VerifyMixedInputListReplaceBin
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/mixedbin.bin -Dunexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_not_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_MIXEDBIN} -Dunexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_not_contains.cmake"
 )
 set_tests_properties(VerifyMixedInputListReplaceBin PROPERTIES
   FIXTURES_REQUIRED mixed_replace
 )
 
 # --- Test 10: Parallel Processing (large mixed list, stress test) ---
+set(FILE_PARALLEL_LIST "${TESTDIR}/parallel_files.txt")
+set(PARALLEL_COUNT 20)
+set(PARALLEL_SEARCH "magicword")
+set(PARALLEL_REPLACE "zzz")
+
+file(WRITE "${FILE_PARALLEL_LIST}" "")
+foreach(i RANGE 1 ${PARALLEL_COUNT})
+  set(FP "${TESTDIR}/par${i}.txt")
+  file(WRITE "${FP}" "begin ${PARALLEL_SEARCH} end")
+  file(APPEND "${FILE_PARALLEL_LIST}" "${FP}\n")
+endforeach()
+
 add_test(NAME ParallelProcessingStress
-  COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_LIST_DIR}/stage_parallel_list.cmake"
-  COMMAND strclear -v --files "${TESTDIR}/parallel_files.txt" magicword zzz
+  COMMAND strclear -v --files "${FILE_PARALLEL_LIST}" ${PARALLEL_SEARCH} ${PARALLEL_REPLACE}
 )
 set_tests_properties(ParallelProcessingStress PROPERTIES
   FIXTURES_SETUP parallel_stress
 )
 
-foreach(i RANGE 1 20)
+foreach(i RANGE 1 ${PARALLEL_COUNT})
   set(FP "${TESTDIR}/par${i}.txt")
   add_test(NAME VerifyParallelProcessingStress${i}
-    COMMAND ${CMAKE_COMMAND} -Dfile=${FP} -Dexpected=zzz -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+    COMMAND ${CMAKE_COMMAND} -Dfile=${FP} -Dexpected=${PARALLEL_REPLACE} -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
   )
   set_tests_properties(VerifyParallelProcessingStress${i} PROPERTIES
     FIXTURES_REQUIRED parallel_stress
@@ -212,80 +266,94 @@ foreach(i RANGE 1 20)
 endforeach()
 
 # --- Test 11: --text-only and --binary-only filtering from a mixed list ---
+set(FILE_FILTER_LIST "${TESTDIR}/filter_files.txt")
+set(TEXTFILE1 "${TESTDIR}/text1.txt")
+set(TEXTFILE2 "${TESTDIR}/text2.txt")
+set(BINFILE1 "${TESTDIR}/bin1.bin")
+set(BINFILE2 "${TESTDIR}/bin2.bin")
+file(WRITE "${TEXTFILE1}" "apple foo apple")
+file(WRITE "${TEXTFILE2}" "banana foo banana")
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/binary1.bin ${TESTDIR})
+file(RENAME ${TESTDIR}/binary1.bin ${BINFILE1})
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/binary2.bin ${TESTDIR})
+file(RENAME ${TESTDIR}/binary2.bin ${BINFILE2})
+file(WRITE "${FILE_FILTER_LIST}" "${TEXTFILE1}\n${TEXTFILE2}\n${BINFILE1}\n${BINFILE2}\n")
+
+# Only text files replaced
 add_test(NAME TextOnlyFiltering
-  COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_LIST_DIR}/stage_filter_list.cmake"
-  COMMAND strclear -v --text-only --files "${TESTDIR}/filter_files.txt" foo TEXTED
+  COMMAND strclear -v --text-only --files "${FILE_FILTER_LIST}" foo TEXTED
 )
 set_tests_properties(TextOnlyFiltering PROPERTIES
   FIXTURES_SETUP text_filter
 )
 add_test(NAME VerifyTextOnlyFiltering1
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/text1.txt -Dexpected=TEXTED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${TEXTFILE1} -Dexpected=TEXTED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyTextOnlyFiltering1 PROPERTIES
   FIXTURES_REQUIRED text_filter
 )
 add_test(NAME VerifyTextOnlyFiltering2
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/text2.txt -Dexpected=TEXTED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${TEXTFILE2} -Dexpected=TEXTED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyTextOnlyFiltering2 PROPERTIES
   FIXTURES_REQUIRED text_filter
 )
 add_test(NAME VerifyTextOnlyFilteringBin1
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/bin1.bin -Dexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${BINFILE1} -Dexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyTextOnlyFilteringBin1 PROPERTIES
   FIXTURES_REQUIRED text_filter
 )
 add_test(NAME VerifyTextOnlyFilteringBin2
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/bin2.bin -Dexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${BINFILE2} -Dexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyTextOnlyFilteringBin2 PROPERTIES
   FIXTURES_REQUIRED text_filter
 )
 
+# Only binary files cleared
 add_test(NAME BinaryOnlyFiltering
-  COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_LIST_DIR}/stage_filter_list.cmake"
-  COMMAND strclear -v --binary-only --files "${TESTDIR}/filter_files.txt" foo
+  COMMAND strclear -v --binary-only --files "${FILE_FILTER_LIST}" foo
 )
 set_tests_properties(BinaryOnlyFiltering PROPERTIES
   FIXTURES_SETUP binary_filter
 )
 add_test(NAME VerifyBinaryOnlyFiltering1
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/bin1.bin -Dunexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_not_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${BINFILE1} -Dunexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_not_contains.cmake"
 )
 set_tests_properties(VerifyBinaryOnlyFiltering1 PROPERTIES
   FIXTURES_REQUIRED binary_filter
 )
 add_test(NAME VerifyBinaryOnlyFiltering2
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/bin2.bin -Dunexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_not_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${BINFILE2} -Dunexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_not_contains.cmake"
 )
 set_tests_properties(VerifyBinaryOnlyFiltering2 PROPERTIES
   FIXTURES_REQUIRED binary_filter
 )
 add_test(NAME VerifyBinaryOnlyFilteringText1
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/text1.txt -Dexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${TEXTFILE1} -Dexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyBinaryOnlyFilteringText1 PROPERTIES
   FIXTURES_REQUIRED binary_filter
 )
 add_test(NAME VerifyBinaryOnlyFilteringText2
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/text2.txt -Dexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${TEXTFILE2} -Dexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyBinaryOnlyFilteringText2 PROPERTIES
   FIXTURES_REQUIRED binary_filter
 )
 
 # --- Test 12: --clear-char option for binary file ---
+set(FILE_CLEARCHAR "${TESTDIR}/cclear.bin")
+file(WRITE "${FILE_CLEARCHAR}" "foofoofoo")
 add_test(NAME BinaryClearChar
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_LIST_DIR}/testdata/cclear.bin" "${TESTDIR}/cclear.bin"
-  COMMAND strclear -v --binary-only --clear_char=X "${TESTDIR}/cclear.bin" foo
+  COMMAND strclear -v --binary-only --clear_char=X "${FILE_CLEARCHAR}" foo
 )
 set_tests_properties(BinaryClearChar PROPERTIES
   FIXTURES_SETUP clearchar
 )
 add_test(NAME VerifyBinaryClearChar
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/cclear.bin -Dexpected=XXX -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
+  COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_CLEARCHAR} -Dexpected=XXX -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 )
 set_tests_properties(VerifyBinaryClearChar PROPERTIES
   FIXTURES_REQUIRED clearchar
@@ -299,9 +367,10 @@ set_tests_properties(StrclearHelp PROPERTIES
   PASS_REGULAR_EXPRESSION "usage|help|clear"
 )
 
-# --- Test 14: Nonexistent File (should fail) ---
+# --- Test 14: Nonexistent File (should be ignored) ---
+set(NONEXISTENT_FILE "${TESTDIR}/does_not_exist.txt")
 add_test(NAME NonexistentFile
-  COMMAND strclear -v "${TESTDIR}/does_not_exist.txt" foo bar
+  COMMAND strclear -v "${NONEXISTENT_FILE}" foo bar
 )
 
 # --- Test 15: Read-only File (should fail) ---
@@ -315,7 +384,6 @@ add_test(NAME ReadOnlyFile
 set_tests_properties(ReadOnlyFile PROPERTIES
   WILL_FAIL TRUE
 )
-endif()
 
 # --- Test #: Unicode/UTF-8 Replacement ---
 #     Disabled for now - we don't support Unicode yet

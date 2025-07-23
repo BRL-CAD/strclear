@@ -1,0 +1,11 @@
+# stage_parallel_list.cmake: create files for the parallel stress test
+set(TESTDIR "$ENV{TESTDIR}")
+if(NOT TESTDIR)
+    set(TESTDIR "${CMAKE_CURRENT_BINARY_DIR}/testfiles")
+endif()
+file(WRITE "${TESTDIR}/parallel_files.txt" "")
+foreach(i RANGE 1 20)
+    set(FP "${TESTDIR}/par${i}.txt")
+    file(WRITE "${FP}" "begin magicword end")
+    file(APPEND "${TESTDIR}/parallel_files.txt" "${FP}\n")
+endforeach()
