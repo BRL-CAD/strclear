@@ -52,12 +52,14 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <queue>
 #include <sstream>
 #include <set>
 #include <string>
@@ -241,45 +243,77 @@ is_binary(std::ifstream &file, size_t max_check = 4096, double nontext_threshold
 void
 process_files(std::map<std::string, std::atomic<int>> &op_tally, std::set<std::string> &files, process_opts &p)
 {
-    if (!p.tgt_strs.size())
-	return;
+    if (files.empty() || p.tgt_strs.empty())
+        return;
 
-    std::set<std::string> setq = files;
+    // Thread pool parameters
+    unsigned int num_threads = std::thread::hardware_concurrency();
+    if (num_threads == 0)
+	num_threads = 4; // Fallback
+    std::queue<std::string> work_queue;
+    std::mutex queue_mutex;
+    std::condition_variable cv;
+    std::atomic<bool> done(false);
 
-    auto worker = [&](const std::string &fname) {
-	std::ifstream check_fs(fname, std::ios::binary);
-	if (!check_fs.is_open()) {
-	    std::cerr << "Error:  unable to open " << fname << "\n";
-	    return;
-	}
-	bool binary_mode = is_binary(check_fs);
-	check_fs.close();
+    // Add all files to the work queue
+    for (const auto& fname : files)
+        work_queue.push(fname);
 
-	int result = 0;
-	if (binary_mode) {
-	    result = process_binary(fname, p);
-	} else {
-	    result = process_text(fname, p);
-	}
-	op_tally[fname] = result;
+    // Worker lambda
+    auto worker = [&]() {
+        while (true) {
+            std::string fname;
+	    {
+		std::unique_lock<std::mutex> lock(queue_mutex);
+		cv.wait(lock, [&]() { return !work_queue.empty() || done.load(); });
+		// If there is work, process it.
+		if (!work_queue.empty()) {
+		    fname = work_queue.front();
+		    work_queue.pop();
+		} else if (done.load()) {
+		    // No work and done, so exit.
+		    return;
+		} else {
+		    // Spurious wakeup, continue waiting.
+		    continue;
+		}
+	    }
+
+            std::ifstream check_fs(fname, std::ios::binary);
+            if (!check_fs.is_open()) {
+                std::cerr << "Error:  unable to open " << fname << "\n";
+                op_tally[fname] = 0;
+                continue;
+            }
+            bool binary_mode = is_binary(check_fs);
+            check_fs.close();
+
+            int result = 0;
+            if (binary_mode) {
+                result = process_binary(fname, p);
+            } else {
+                result = process_text(fname, p);
+            }
+            op_tally[fname] = result;
+        }
     };
 
-    int max_thread_cnt = 12;
-    while (!setq.empty()) {
-	std::set<std::string> wset;
-	while (!setq.empty() && wset.size() < max_thread_cnt) {
-	    wset.insert(*setq.begin());
-	    setq.erase(setq.begin());
-	}
-
-	std::vector<std::thread> threads;
-	for (const auto &fname : wset) {
-	    threads.emplace_back(worker, fname);
-	}
-	for (auto &t : threads) {
-	    t.join();
-	}
+    // Launch thread pool
+    std::vector<std::thread> threads;
+    for (unsigned int i = 0; i < num_threads; ++i) {
+        threads.emplace_back(worker);
     }
+
+    // Notify all threads in case they're waiting on empty queue
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        done = true;
+    }
+    cv.notify_all();
+
+    // Join threads
+    for (auto &t : threads)
+	t.join();
 }
 
 int
@@ -424,7 +458,20 @@ main(int argc, const char *argv[])
     process_files(op_tally, files, p);
 
     if (p.verbose) {
-	if (op_tally.size()) {
+
+	// Verify we did something on some file before we print anything
+	std::map<std::string, std::atomic<int>>::iterator o_it;
+	bool did_op = false;
+	for (o_it = op_tally.begin(); o_it != op_tally.end(); ++o_it) {
+	    if (o_it->second != 0) {
+		did_op = true;
+		break;
+	    }
+	}
+
+	// If we did something interesting, report it - otherwise just note
+	// that nothing happened.
+	if (did_op) {
 	    std::string cchar(1, clear_char);
 	    if (clear_char == '\0')
 		cchar = std::string("\\0");
@@ -448,7 +495,6 @@ main(int argc, const char *argv[])
 	    std::cout << "----------Processed Paths-------\n";
 
 	    // print tally
-	    std::map<std::string, std::atomic<int>>::iterator o_it;
 	    for (o_it = op_tally.begin(); o_it != op_tally.end(); ++o_it) {
 		std::cout << o_it->first << ": ";
 		if (o_it->second < 0) {

@@ -227,9 +227,6 @@ set(NONEXISTENT_FILE "${TESTDIR}/does_not_exist.txt")
 add_test(NAME NonexistentFile
     COMMAND strclear -v "${NONEXISTENT_FILE}" foo bar
 )
-set_tests_properties(NonexistentFile PROPERTIES
-    WILL_FAIL TRUE
-)
 
 # Local Variables:
 # tab-width: 8
