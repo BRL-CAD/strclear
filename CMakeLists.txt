@@ -54,37 +54,16 @@ endif(NOT DEFINED BIN_DIR)
 include(CheckCXXCompilerFlag)
 check_cxx_compiler_flag(-O3 O3_COMPILER_FLAG)
 
-include(CheckIncludeFiles)
-check_include_files(sys/mman.h HAVE_SYS_MMAN_H)
-if (HAVE_SYS_MMAN_H)
-  add_definitions(-DHAVE_SYS_MMAN_H=1)
-endif (HAVE_SYS_MMAN_H)
-check_include_files(sys/stat.h HAVE_SYS_STAT_H)
-if (HAVE_SYS_STAT_H)
-  add_definitions(-DHAVE_SYS_STAT_H=1)
-endif (HAVE_SYS_STAT_H)
-check_include_files(sys/unistd.h HAVE_UNISTD_H)
-if (HAVE_UNISTD_H)
-  add_definitions(-DHAVE_UNISTD_H=1)
-endif (HAVE_UNISTD_H)
-check_include_files(sys/fcntl.h HAVE_FCNTL_H)
-if (HAVE_FCNTL_H)
-  add_definitions(-DHAVE_FCNTL_H=1)
-endif (HAVE_FCNTL_H)
-
-add_executable(strclear strclear.cpp MappedFile.cpp strnstr.c)
+add_executable(strclear strclear.cpp)
 if (O3_COMPILER_FLAG)
   # If we have the O3 flag, use it
   target_compile_options(strclear PRIVATE "-O3")
 endif (O3_COMPILER_FLAG)
 install(TARGETS strclear DESTINATION ${BIN_DIR})
 
-if(COMMAND CMAKEFILES)
-  CMAKEFILES(
-    CMakeLists.txt
-    strclear.cpp
-    )
-endif()
+enable_testing()
+
+add_subdirectory(tests)
 
 # Local Variables:
 # tab-width: 8

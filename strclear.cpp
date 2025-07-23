@@ -55,7 +55,6 @@
 #include <string>
 #include <vector>
 #include "cxxopts.hpp"
-#include "MappedFile.hpp"
 
 extern "C" char *
 strnstr(const char *h, const char *n, size_t hlen);
@@ -175,23 +174,6 @@ process_text(std::string &fname, std::string &target_str, std::string &replace_s
 	tgt_strs.insert(target_str);
     }
 
-    // See if the target string is present
-    MappedFile mf(fname.c_str());
-    if (!mf.buf) {
-	std::cerr << "Error: could not open " << fname << "\n";
-	return -1;
-    }
-    std::set<std::string>::iterator t_it;
-    bool process = false;
-    for (t_it = tgt_strs.begin(); t_it != tgt_strs.end(); ++t_it) {
-	if (strnstr((const char *)mf.buf, t_it->c_str(), mf.buflen)) {
-	    process = true;
-	    break;
-	}
-    }
-    if (!process)
-	return 0;
-
     std::ifstream input_fs(fname);
     std::stringstream fbuffer;
     fbuffer << input_fs.rdbuf();
@@ -202,6 +184,7 @@ process_text(std::string &fname, std::string &target_str, std::string &replace_s
 
     // Use index and std::string::find for O(N) replacement
     bool changed = false;
+    std::set<std::string>::iterator t_it;
     for (t_it = tgt_strs.begin(); t_it != tgt_strs.end(); ++t_it) {
 	size_t pos = 0;
 	int rcnt = 0;

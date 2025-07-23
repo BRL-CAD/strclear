@@ -1,0 +1,12 @@
+if(NOT DEFINED file)
+    message(FATAL_ERROR "Must define -Dfile argument")
+endif()
+if(NOT DEFINED expected)
+    message(FATAL_ERROR "Must define -Dexpected argument")
+endif()
+
+file(READ "${file}" file_content)
+string(FIND "${file_content}" "${expected}" found)
+if(found EQUAL -1)
+    message(FATAL_ERROR "File ${file} does not contain expected text: '${expected}'\nActual content:\n${file_content}")
+endif()
