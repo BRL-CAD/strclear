@@ -1,0 +1,12 @@
+Right now this tool is one file per operation, but it
+would be better to be able to feed in a list of files.
+
+We could process them in parallel to determine text or
+binary, and perform the appropriate operation on them.
+
+Can still keep single file modes for manual operations
+or testing, but since the parent build should be able
+to feed us all the files at once it would simplify the
+parent build logic to be able to just hand us the list
+and take care of it.  Should also speed things up a lot
+since parallel processing ought to be an option.
