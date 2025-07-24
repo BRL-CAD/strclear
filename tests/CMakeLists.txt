@@ -37,50 +37,46 @@ function(assert_file_not_contains file unexpected_text)
 endfunction()
 
 # --- Test 1: Non-filesystem string replace ---
+# Set up a template to use as input.  Since the contents are altered, the test
+# needs to stage it each time - that's why we write it out with the .in suffix.
+set(PLAINFILE "plain.txt")
+file(WRITE "${TESTDIR}/${PLAINFILE}.in" "This is a test string foo and bar.\nAnother foo here.")
+
 add_test(NAME BasicStringReplace
-  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR}
-  -DSTRCLEAR=$<TARGET_FILE:strclear>
-  -P "${CMAKE_CURRENT_SOURCE_DIR}/01_basic_string_replace.cmake"
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${PLAINFILE}
+  -DTNUM=1 -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=2 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
 )
 
 # --- Test 2: Path expansion (filesystem) ---
-# Place target file in the build directory so it will exist for std::filesystem
-set(TGTSTR "pathexpand.txt")
-file(WRITE "${TESTDIR}/${TGTSTR}" "dummy")
-
-# Set up the template that will be altered, so the .cmake script can copy it
-# into place for each test
-set(WITHPATHS_INPUT "${TESTDIR}/withpaths.txt.in")
-get_filename_component(ABS_PATH_FOR_FILE "${TESTDIR}/${TGTSTR}" ABSOLUTE)
-set(WITHPATHS_TXT "Here is a path: ${TGTSTR}\nAnd here is another: ${ABS_PATH_FOR_FILE}\n")
-file(WRITE "${WITHPATHS_INPUT}" "${WITHPATHS_TXT}")
+# Set up the template for the to-be-altered file.  For this test we want to
+# point to a file that is present - we can just target the plain.in file from
+# the first test, since that is already placed on the filesystem by CMake.
+set(WITHPATHSFILE "withpaths.txt")
+get_filename_component(ABS_PATH_FOR_FILE "${TESTDIR}/${PLAINFILE}.in" ABSOLUTE)
+set(WITHPATHS_TXT "Relative: ${PLAINFILE}.in\nAbsolute: ${ABS_PATH_FOR_FILE}\n")
+file(WRITE "${TESTDIR}/${WITHPATHSFILE}.in" "${WITHPATHS_TXT}")
 
 add_test(NAME PathExpansionReplace
-  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR}
-  -DTGTSTR=${TGTSTR} -DSTRCLEAR=$<TARGET_FILE:strclear>
-  -P "${CMAKE_CURRENT_SOURCE_DIR}/02_path_expansion.cmake"
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${WITHPATHSFILE}
+  -DTNUM=2 -DTGTSTR=${PLAINFILE}.in -DEXPSTR=CLEARED -DEXPCNT=2 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v\;-p
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
 )
 
 # --- Test 3: Symlink path expansion ---
-# Place target file in the build directory so it will exist for std::filesystem
-set(TGTSTR "target.txt")
-file(WRITE "${TESTDIR}/${TGTSTR}" "dummy")
-set(SYMSTR "symlink.txt")
-file(CREATE_LINK "${TESTDIR}/${TGTSTR}" "${TESTDIR}/${SYMSTR}" SYMBOLIC RESULT symlink_ret)
+# IFF the OS supports making symlinks, we can do this test - find out
+set(SYMFILE "symlink.txt")
+file(CREATE_LINK "${TESTDIR}/${PLAINFILE}.in" "${TESTDIR}/${SYMFILE}" SYMBOLIC RESULT symlink_ret)
 if(symlink_ret EQUAL 0)
-  # IFF the OS supports making symlinks, we can do this test
+  # Set up the template for the to-be-altered file.
+  set(WITHSYMFILE "withsymlink.txt")
+  set(WITHSYMLINK_TXT "Original: ${TESTDIR}/${PLAINFILE}.in\nSymlink: ${TESTDIR}/${SYMFILE}\n")
+  file(WRITE "${TESTDIR}/${WITHSYMFILE}.in" "${WITHSYMLINK_TXT}")
 
-  # Prepare a template of the file that will be altered - this needs to be copied
-  # into place by the test each time
-  set(WITHSYMLINK_INPUT "${TESTDIR}/withsymlink.txt.in")
-  set(SRC_FILE "${TESTDIR}/target.txt")
-  set(WITHSYMLINK_TXT "Original: ${TESTDIR}/${TGTSTR}\nSymlink: ${TESTDIR}/${SYMSTR}\n")
-  file(WRITE "${WITHSYMLINK_INPUT}" "${WITHSYMLINK_TXT}")
-
-add_test(NAME SymlinkPathExpansionReplace
-  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR}
-  -DTGTSTR=${SYMSTR} -DSTRCLEAR=$<TARGET_FILE:strclear>
-  -P "${CMAKE_CURRENT_SOURCE_DIR}/03_symlink_path_expansion.cmake"
+  add_test(NAME SymlinkPathExpansionReplace
+    COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${WITHSYMFILE}
+    -DTNUM=3 -DTGTSTR=${SYMFILE} -DEXPSTR=CLEARED -DEXPCNT=2 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v\;-p
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
   )
 endif()
 

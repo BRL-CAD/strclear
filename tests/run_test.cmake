@@ -1,16 +1,12 @@
 # Reset input file
-set(TFILE "withpaths.txt")
-set(TF "${TDIR}/${TFILE}")
+set(TF "${TDIR}/${TFILE}${TNUM}")
 execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different "${TDIR}/${TFILE}.in" "${TF}")
-
-# Set value to replace with and check
-set(expected "CLEARED")
 
 # Run strclear
 message("WORKING_DIRECTORY ${TDIR}")
-message("${STRCLEAR} -v -p ${TF} ${TGTSTR} ${expected}")
+message("${STRCLEAR} ${STRCLEAR_OPTS} ${TF} ${TGTSTR} ${EXPSTR}")
 execute_process(
-  COMMAND "${STRCLEAR}" -v -p "${TF}" "${TGTSTR}" ${expected}
+  COMMAND "${STRCLEAR}" ${STRCLEAR_OPTS} "${TF}" "${TGTSTR}" ${EXPSTR}
   WORKING_DIRECTORY ${TDIR}
   )
 
@@ -19,12 +15,12 @@ file(READ "${TF}" file_content)
 
 # Match all occurrences of CLEARED and store them in a list
 string(REPLACE "\n" "" file_content "${file_content}")
-string(REGEX MATCHALL "${expected}" MATCHES "${file_content}")
+string(REGEX MATCHALL "${EXPSTR}" MATCHES "${file_content}")
 list(LENGTH MATCHES count)
 
-if(NOT ${count} EQUAL 2)
+if(NOT ${count} EQUAL ${EXPCNT})
   file(READ "${TF}" file_content)
-  message(FATAL_ERROR "File ${TF} does not contain expected text: 2x'${expected}'\nActual content:\n${file_content}")
+  message(FATAL_ERROR "File ${TF} does not contain expected text: ${EXPCNT}x'${EXPSTR}'\nActual content:\n${file_content}")
 endif()
 
 # Local Variables:
