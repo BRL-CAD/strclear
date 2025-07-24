@@ -8,9 +8,9 @@ set(expected "CLEARED")
 
 # Run strclear
 message("WORKING_DIRECTORY ${TDIR}")
-message("${STRCLEAR} -v -p ${TF} pathexpand.txt ${expected}")
+message("${STRCLEAR} -v -p ${TF} ${TGTSTR} ${expected}")
 execute_process(
-  COMMAND "${STRCLEAR}" -v -p "${TF}" "pathexpand.txt" ${expected}
+  COMMAND "${STRCLEAR}" -v -p "${TF}" "${TGTSTR}" ${expected}
   WORKING_DIRECTORY ${TDIR}
   )
 

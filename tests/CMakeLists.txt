@@ -44,17 +44,20 @@ add_test(NAME BasicStringReplace
 )
 
 # --- Test 2: Path expansion (filesystem) ---
+# Place target file in the build directory so it will exist for std::filesystem
+set(TGTSTR "pathexpand.txt")
+file(WRITE "${TESTDIR}/${TGTSTR}" "dummy")
+
+# Set up the template that will be altered, so the .cmake script can copy it
+# into place for each test
 set(WITHPATHS_INPUT "${TESTDIR}/withpaths.txt.in")
-get_filename_component(ABS_PATH_FOR_FILE "${TESTDIR}/pathexpand.txt" ABSOLUTE)
-set(WITHPATHS_TXT "Here is a path: pathexpand.txt\nAnd here is another: ${ABS_PATH_FOR_FILE}\n")
+get_filename_component(ABS_PATH_FOR_FILE "${TESTDIR}/${TGTSTR}" ABSOLUTE)
+set(WITHPATHS_TXT "Here is a path: ${TGTSTR}\nAnd here is another: ${ABS_PATH_FOR_FILE}\n")
 file(WRITE "${WITHPATHS_INPUT}" "${WITHPATHS_TXT}")
-# Place target files in the build directory so they will exist for std::filesystem
-file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/testdata/relpath.txt" DESTINATION "${TESTDIR}")
-file(RENAME "${TESTDIR}/relpath.txt" "${TESTDIR}/pathexpand.txt")
 
 add_test(NAME PathExpansionReplace
   COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR}
-  -DSTRCLEAR=$<TARGET_FILE:strclear>
+  -DTGTSTR=${TGTSTR} -DSTRCLEAR=$<TARGET_FILE:strclear>
   -P "${CMAKE_CURRENT_SOURCE_DIR}/02_path_expansion.cmake"
 )
 
