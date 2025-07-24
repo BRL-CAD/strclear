@@ -76,7 +76,7 @@ class process_opts {
 	bool text_only = false;
 	bool verbose = false;
 	char clear_char = '\0';
-	std::set<std::string> tgt_strs;
+	std::vector<std::string> tgt_strs;
 	std::string replace_str;
 };
 
@@ -87,7 +87,6 @@ expand_path_forms(const std::string &input) {
     std::vector<std::string> forms;
     if (!input.length())
 	return forms;
-    forms.push_back(input); // Always include original
 
     try {
 	fs::path p(input);
@@ -109,6 +108,11 @@ expand_path_forms(const std::string &input) {
     } catch (...) {
 	// Ignore errors (broken symlink, permission denied, etc).
     }
+
+    // Always include original last - it's (potentially) a subset of the
+    // others, so only want to replace it after we match the longer forms.
+    forms.push_back(input);
+
     return forms;
 }
 
@@ -129,7 +133,7 @@ process_binary(const std::string &fname, process_opts &p)
     input_fs.close();
 
     // Process all target strings
-    std::set<std::string>::iterator t_it;
+    std::vector<std::string>::iterator t_it;
     for (t_it = p.tgt_strs.begin(); t_it != p.tgt_strs.end(); ++t_it) {
 	std::vector<char> search_chars(t_it->begin(), t_it->end());
 	std::vector<char> null_chars(search_chars.size(), p.clear_char);
@@ -188,7 +192,7 @@ process_text(const std::string &fname, process_opts &p)
     int rincr = (p.replace_str.length()) ? 1 : -1;
 
     // Use index and std::string::find for O(N) replacement
-    std::set<std::string>::iterator t_it;
+    std::vector<std::string>::iterator t_it;
     for (t_it = p.tgt_strs.begin(); t_it != p.tgt_strs.end(); ++t_it) {
 	size_t pos = 0;
 	while ((pos = nfile_contents.find(*t_it, pos)) != std::string::npos) {
@@ -243,7 +247,7 @@ is_binary(std::ifstream &file, size_t max_check = 4096, double nontext_threshold
 void
 process_files(std::map<std::string, std::atomic<int>> &op_tally, std::set<std::string> &files, process_opts &p)
 {
-    if (files.empty() || p.tgt_strs.empty())
+    if (files.empty() || !p.tgt_strs.size())
         return;
 
     // Thread pool parameters
@@ -320,12 +324,6 @@ int
 main(int argc, const char *argv[])
 {
     process_opts p;
-    bool binary_only = false;
-    bool binary_test_mode = false;
-    bool path_mode = false;
-    bool text_only = false;
-    bool verbose = false;
-    char clear_char = '\0';
     std::string file_list;
 
     cxxopts::Options options(argv[0],
@@ -386,36 +384,36 @@ main(int argc, const char *argv[])
 
 
     // binary_only ∩ text_only == NULL set
-    if (binary_only && text_only) {
+    if (p.binary_only && p.text_only) {
 	std::cerr << "Error:  can specify binary-only or text-only, not both.\n";
 	std::cout << options.help({""}) << std::endl;
 	return -1;
     }
 
     // If we're testing whether a file is binary, we only take one argument
-    if (binary_test_mode && nonopts.size() != 1) {
+    if (p.binary_test_mode && nonopts.size() != 1) {
 	std::cerr << "Error:  -B accepts exactly one file path as input.\n";
 	std::cout << options.help({""}) << std::endl;
 	return -1;
     }
 
     // Everything else needs at least a filename or file list and a target string
-    if ((file_list.length() && !binary_only) && (nonopts.size() != 1 && nonopts.size() != 2)) {
+    if ((file_list.length() && !p.binary_only) && (nonopts.size() != 1 && nonopts.size() != 2)) {
 	std::cerr << "Error:  when using a file list we need a target string and (optionally) a replacement string.\n";
 	std::cout << options.help({""}) << std::endl;
 	return -1;
     }
-    if ((file_list.length() && binary_only) && (nonopts.size() != 1)) {
+    if ((file_list.length() && p.binary_only) && (nonopts.size() != 1)) {
 	std::cerr << "Error:  when using a file list and binary-only filtering we only accept a target string and (optionally) a --clear-char character - using a full replacement string isn't supported.\n";
 	std::cout << options.help({""}) << std::endl;
 	return -1;
     }
-    if ((!file_list.length() && !binary_only) && (nonopts.size() != 2 && nonopts.size() != 3)) {
+    if ((!file_list.length() && !p.binary_only) && (nonopts.size() != 2 && nonopts.size() != 3)) {
 	std::cerr << "Error:  we need a file, a target string and (optionally) a replacement string.\n";
 	std::cout << options.help({""}) << std::endl;
 	return -1;
     }
-    if ((!file_list.length() && binary_only) && (nonopts.size() != 2)) {
+    if ((!file_list.length() && p.binary_only) && (nonopts.size() != 2)) {
 	std::cerr << "Error:  when in binary-only mode we only accept a filename, a target string and (optionally) a --clear-char character - using a full replacement string isn't supported.\n";
 	return -1;
     }
@@ -446,12 +444,11 @@ main(int argc, const char *argv[])
 	return -1;
     }
 
-    std::set<std::string> tgt_strs;
-    if (path_mode) {
-	auto expanded = expand_path_forms(target_str);
-	p.tgt_strs.insert(expanded.begin(), expanded.end());
+    std::vector<std::string> tgt_strs;
+    if (p.path_mode) {
+	p.tgt_strs = expand_path_forms(target_str);
     } else {
-	p.tgt_strs.insert(target_str);
+	p.tgt_strs.push_back(target_str);
     }
 
     std::map<std::string, std::atomic<int>> op_tally;
@@ -472,15 +469,15 @@ main(int argc, const char *argv[])
 	// If we did something interesting, report it - otherwise just note
 	// that nothing happened.
 	if (did_op) {
-	    std::string cchar(1, clear_char);
-	    if (clear_char == '\0')
+	    std::string cchar(1, p.clear_char);
+	    if (p.clear_char == '\0')
 		cchar = std::string("\\0");
 
 	    std::cout << "Summary:\n";
 	    std::cout << "    Original target string: " << target_str << "\n";
-	    if (path_mode) {
+	    if (p.path_mode) {
 		std::cout << "    Expanded path targets: \n";
-		std::set<std::string>::iterator t_it;
+		std::vector<std::string>::iterator t_it;
 		for (t_it = p.tgt_strs.begin(); t_it != p.tgt_strs.end(); ++t_it) {
 		    if (*t_it == target_str)
 			continue;

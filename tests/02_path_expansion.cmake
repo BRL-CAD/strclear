@@ -3,21 +3,28 @@ set(TFILE "withpaths.txt")
 set(TF "${TDIR}/${TFILE}")
 execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different "${TDIR}/${TFILE}.in" "${TF}")
 
-# Make sure target files are staged
-file(COPY "${SDIR}/relpath.txt" DESTINATION "${TDIR}")
-file(COPY "${SDIR}/abspath.txt" DESTINATION "${TDIR}")
-
 # Set value to replace with and check
 set(expected "CLEARED")
 
 # Run strclear
-execute_process(COMMAND "${STRCLEAR}" -v -p "${TF}" "relpath.txt" ${expected})
+message("WORKING_DIRECTORY ${TDIR}")
+message("${STRCLEAR} -v -p ${TF} pathexpand.txt ${expected}")
+execute_process(
+  COMMAND "${STRCLEAR}" -v -p "${TF}" "pathexpand.txt" ${expected}
+  WORKING_DIRECTORY ${TDIR}
+  )
 
 # Check output file contents
 file(READ "${TF}" file_content)
-string(FIND "${file_content}" "${expected}" found)
-if(found EQUAL -1)
-  message(FATAL_ERROR "File ${TF} does not contain expected text: '${expected}'\nActual content:\n${file_content}")
+
+# Match all occurrences of CLEARED and store them in a list
+string(REPLACE "\n" "" file_content "${file_content}")
+string(REGEX MATCHALL "${expected}" MATCHES "${file_content}")
+list(LENGTH MATCHES count)
+
+if(NOT ${count} EQUAL 2)
+  file(READ "${TF}" file_content)
+  message(FATAL_ERROR "File ${TF} does not contain expected text: 2x'${expected}'\nActual content:\n${file_content}")
 endif()
 
 # Local Variables:

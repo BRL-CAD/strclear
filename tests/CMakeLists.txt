@@ -45,11 +45,12 @@ add_test(NAME BasicStringReplace
 
 # --- Test 2: Path expansion (filesystem) ---
 set(WITHPATHS_INPUT "${TESTDIR}/withpaths.txt.in")
-set(REL_PATH "relpath.txt")
-set(ABS_PATH "${TESTDIR}/abspath.txt")
-get_filename_component(ABS_PATH_FOR_FILE "${ABS_PATH}" ABSOLUTE)
-set(WITHPATHS_TXT "Here is a path: ${REL_PATH}\nAnd here is another: ${ABS_PATH_FOR_FILE}\n")
+get_filename_component(ABS_PATH_FOR_FILE "${TESTDIR}/pathexpand.txt" ABSOLUTE)
+set(WITHPATHS_TXT "Here is a path: pathexpand.txt\nAnd here is another: ${ABS_PATH_FOR_FILE}\n")
 file(WRITE "${WITHPATHS_INPUT}" "${WITHPATHS_TXT}")
+# Place target files in the build directory so they will exist for std::filesystem
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/testdata/relpath.txt" DESTINATION "${TESTDIR}")
+file(RENAME "${TESTDIR}/relpath.txt" "${TESTDIR}/pathexpand.txt")
 
 add_test(NAME PathExpansionReplace
   COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR}
@@ -59,12 +60,24 @@ add_test(NAME PathExpansionReplace
 
 if(0)
 # --- Test 3: Symlink path expansion ---
-set(SRC_FILE "${TESTDIR}/target.txt.in")
-set(SYM_PATH "${TESTDIR}/symlink.txt")
-set(FILE3 "${TESTDIR}/withsymlink.txt.in")
-set(TEXT3 "Original: ${SRC_FILE}\nSymlink: ${SYM_PATH}\n")
-file(WRITE "${FILE3}" "${TEXT3}")
+# Prepare a template of the file that will be altered - this needs to be copied
+# into place by the test each time
+set(WITHSYMLINK_INPUT "${TESTDIR}/withsymlink.txt.in")
+set(SRC_FILE "${TESTDIR}/target.txt")
+set(WITHSYMLINK_TXT "Original: ${SRC_FILE}\nSymlink: ${TESTDIR}/symlink.txt\n")
+
+
+file(WRITE "${WITHSYMLINK_INPUT}" "${WITHSYMLINK_TXT }")
 file(WRITE "${SRC_FILE}" "dummy")
+
+add_test(NAME PathExpansionReplace
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR}
+  -DSTRCLEAR=$<TARGET_FILE:strclear>
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/02_path_expansion.cmake"
+)
+
+
+
 
 add_test(NAME SymlinkPathExpansionReplace
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SRC_FILE}" "${TESTDIR}/target.txt"

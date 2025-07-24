@@ -56,13 +56,13 @@ check_cxx_compiler_flag(-O3 O3_COMPILER_FLAG)
 
 find_package(Threads REQUIRED)
 
-#add_definitions(-g)
+add_definitions(-g)
 
 add_executable(strclear strclear.cpp)
 target_link_libraries(strclear PRIVATE Threads::Threads)
 if (O3_COMPILER_FLAG)
   # If we have the O3 flag, use it
-  target_compile_options(strclear PRIVATE "-O3")
+  #target_compile_options(strclear PRIVATE "-O3")
 endif (O3_COMPILER_FLAG)
 install(TARGETS strclear DESTINATION ${BIN_DIR})
 
