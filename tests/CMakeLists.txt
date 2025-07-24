@@ -142,125 +142,53 @@ add_test(NAME BinaryFile
   -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
 )
 
-if(0)
-# --- Test 9: Mixed Input List via --files option ---
-add_test(NAME MixedInputListReplace
-  COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_LIST_DIR}/stage_mixed_list.cmake"
-  COMMAND strclear -v --files "${TESTDIR}/mixed_files.txt" foo REPLACED
-)
-set_tests_properties(MixedInputListReplace PROPERTIES
-  FIXTURES_SETUP mixed_replace
+# --- Test 10: Mixed Input List via --files option ---
+set(MIXTXTFILE "mix_input_list.txt")
+file(WRITE "${TESTDIR}/${MIXTXTFILE}.in" "This is a text input for mixed lists.  foo.")
+set(MIXBINFILE "mix_input_list.bin")
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/${BINARYFILE}" DESTINATION ${TESTDIR})
+file(RENAME "${TESTDIR}/${BINARYFILE}" "${TESTDIR}/${MIXBINFILE}.in")
+
+add_test(NAME MixedList
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata
+  -DTDIR=${TESTDIR} -DTNUM=10 -DCPYCNT=1 -DQUIET_RUN=1
+  -DTBINFILE=${MIXBINFILE} -DEXPNULLCNT=6 -DCHARCNT=$<TARGET_FILE:charcnt>
+  -DTTXTFILE=${MIXTXTFILE} -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=1
+  -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_mixed_list.cmake"
 )
 
-add_test(NAME VerifyMixedInputListReplace1
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/mixed1.txt -Dexpected=REPLACED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyMixedInputListReplace1 PROPERTIES
-  FIXTURES_REQUIRED mixed_replace
-)
-add_test(NAME VerifyMixedInputListReplace2
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/mixed2.txt -Dexpected=REPLACED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyMixedInputListReplace2 PROPERTIES
-  FIXTURES_REQUIRED mixed_replace
-)
-add_test(NAME VerifyMixedInputListReplace3
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/mixed3.txt -Dexpected=REPLACED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyMixedInputListReplace3 PROPERTIES
-  FIXTURES_REQUIRED mixed_replace
-)
-add_test(NAME VerifyMixedInputListReplaceBin
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/mixedbin.bin -Dunexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_not_contains.cmake"
-)
-set_tests_properties(VerifyMixedInputListReplaceBin PROPERTIES
-  FIXTURES_REQUIRED mixed_replace
+# --- Test 11: Parallel Processing (large mixed list, stress test) ---
+add_test(NAME ParallelProcessing
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata
+  -DTDIR=${TESTDIR} -DTNUM=11 -DCPYCNT=50 -DQUIET_RUN=1
+  -DTBINFILE=${MIXBINFILE} -DEXPNULLCNT=6 -DCHARCNT=$<TARGET_FILE:charcnt>
+  -DTTXTFILE=${MIXTXTFILE} -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=1
+  -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_mixed_list.cmake"
 )
 
-# --- Test 10: Parallel Processing (large mixed list, stress test) ---
-add_test(NAME ParallelProcessingStress
-  COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_LIST_DIR}/stage_parallel_list.cmake"
-  COMMAND strclear -v --files "${TESTDIR}/parallel_files.txt" magicword zzz
-)
-set_tests_properties(ParallelProcessingStress PROPERTIES
-  FIXTURES_SETUP parallel_stress
-)
-
-foreach(i RANGE 1 20)
-  set(FP "${TESTDIR}/par${i}.txt")
-  add_test(NAME VerifyParallelProcessingStress${i}
-    COMMAND ${CMAKE_COMMAND} -Dfile=${FP} -Dexpected=zzz -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-  )
-  set_tests_properties(VerifyParallelProcessingStress${i} PROPERTIES
-    FIXTURES_REQUIRED parallel_stress
-  )
-endforeach()
-
-# --- Test 11: --text-only and --binary-only filtering from a mixed list ---
+# --- Test 12: Text file only filtering from a mixed list ---
 add_test(NAME TextOnlyFiltering
-  COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_LIST_DIR}/stage_filter_list.cmake"
-  COMMAND strclear -v --text-only --files "${TESTDIR}/filter_files.txt" foo TEXTED
-)
-set_tests_properties(TextOnlyFiltering PROPERTIES
-  FIXTURES_SETUP text_filter
-)
-add_test(NAME VerifyTextOnlyFiltering1
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/text1.txt -Dexpected=TEXTED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyTextOnlyFiltering1 PROPERTIES
-  FIXTURES_REQUIRED text_filter
-)
-add_test(NAME VerifyTextOnlyFiltering2
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/text2.txt -Dexpected=TEXTED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyTextOnlyFiltering2 PROPERTIES
-  FIXTURES_REQUIRED text_filter
-)
-add_test(NAME VerifyTextOnlyFilteringBin1
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/bin1.bin -Dexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyTextOnlyFilteringBin1 PROPERTIES
-  FIXTURES_REQUIRED text_filter
-)
-add_test(NAME VerifyTextOnlyFilteringBin2
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/bin2.bin -Dexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyTextOnlyFilteringBin2 PROPERTIES
-  FIXTURES_REQUIRED text_filter
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata
+  -DTDIR=${TESTDIR} -DTNUM=12 -DCPYCNT=1 -DQUIET_RUN=1
+  -DTBINFILE=${MIXBINFILE} -DEXPNULLCNT=3 -DCHARCNT=$<TARGET_FILE:charcnt>
+  -DTTXTFILE=${MIXTXTFILE} -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=1
+  -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v\;--text-only
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_mixed_list.cmake"
 )
 
+# --- Test 13: Binary file only filtering from a mixed list ---
 add_test(NAME BinaryOnlyFiltering
-  COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_LIST_DIR}/stage_filter_list.cmake"
-  COMMAND strclear -v --binary-only --files "${TESTDIR}/filter_files.txt" foo
-)
-set_tests_properties(BinaryOnlyFiltering PROPERTIES
-  FIXTURES_SETUP binary_filter
-)
-add_test(NAME VerifyBinaryOnlyFiltering1
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/bin1.bin -Dunexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_not_contains.cmake"
-)
-set_tests_properties(VerifyBinaryOnlyFiltering1 PROPERTIES
-  FIXTURES_REQUIRED binary_filter
-)
-add_test(NAME VerifyBinaryOnlyFiltering2
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/bin2.bin -Dunexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_not_contains.cmake"
-)
-set_tests_properties(VerifyBinaryOnlyFiltering2 PROPERTIES
-  FIXTURES_REQUIRED binary_filter
-)
-add_test(NAME VerifyBinaryOnlyFilteringText1
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/text1.txt -Dexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyBinaryOnlyFilteringText1 PROPERTIES
-  FIXTURES_REQUIRED binary_filter
-)
-add_test(NAME VerifyBinaryOnlyFilteringText2
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/text2.txt -Dexpected=foo -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyBinaryOnlyFilteringText2 PROPERTIES
-  FIXTURES_REQUIRED binary_filter
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata
+  -DTDIR=${TESTDIR} -DTNUM=13 -DCPYCNT=1 -DQUIET_RUN=1
+  -DTBINFILE=${MIXBINFILE} -DEXPNULLCNT=6 -DCHARCNT=$<TARGET_FILE:charcnt>
+  -DTTXTFILE=${MIXTXTFILE} -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=0
+  -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v\;--binary-only
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_mixed_list.cmake"
 )
 
+if(0)
 # --- Test 12: --clear-char option for binary file ---
 add_test(NAME BinaryClearChar
   COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_LIST_DIR}/testdata/cclear.bin" "${TESTDIR}/cclear.bin"
@@ -310,15 +238,8 @@ endif()
 #add_test(NAME UnicodeReplacement
 #    COMMAND strclear -v "${FILE_UTF8}" foo 💧
 #)
-#set_tests_properties(UnicodeReplacement PROPERTIES
-#    FIXTURES_SETUP unicode_replace
-#)
-#
 #add_test(NAME VerifyUnicodeReplacement
 #    COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_UTF8} -Dexpected=💧 -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-#)
-#set_tests_properties(VerifyUnicodeReplacement PROPERTIES
-#    FIXTURES_REQUIRED unicode_replace
 #)
 
 # Local Variables:

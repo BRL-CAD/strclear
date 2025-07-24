@@ -302,12 +302,11 @@ process_files(std::map<std::string, std::atomic<int>> &op_tally, std::set<std::s
             check_fs.close();
 
             int result = 0;
-            if (binary_mode) {
-                result = process_binary(fname, p);
-            } else {
-                result = process_text(fname, p);
-            }
-            op_tally[fname] = result;
+	    if (binary_mode && !p.text_only)
+		result = process_binary(fname, p);
+	    if (!binary_mode && !p.binary_only)
+		result = process_text(fname, p);
+	    op_tally[fname] = result;
         }
     };
 
@@ -413,9 +412,7 @@ main(int argc, const char *argv[])
 	return -1;
     }
     if ((file_list.length() && p.binary_only) && (nonopts.size() != 1)) {
-	std::cerr << "Error:  when using a file list and binary-only filtering we only accept a target string and (optionally) a --clear-char character - using a full replacement string isn't supported.\n";
-	std::cout << options.help({""}) << std::endl;
-	return -1;
+	std::cerr << "Warning:  binary filtering uses a target string and (optionally) a --clear-char character - full replacement strings are not supported.  Ignoring specified replacement string.\n";
     }
     if ((!file_list.length() && !p.binary_only) && (nonopts.size() != 2 && nonopts.size() != 3)) {
 	std::cerr << "Error:  we need a file, a target string and (optionally) a replacement string.\n";
