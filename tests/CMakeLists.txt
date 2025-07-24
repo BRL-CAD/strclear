@@ -61,44 +61,31 @@ add_test(NAME PathExpansionReplace
   -P "${CMAKE_CURRENT_SOURCE_DIR}/02_path_expansion.cmake"
 )
 
-if(0)
 # --- Test 3: Symlink path expansion ---
-# Prepare a template of the file that will be altered - this needs to be copied
-# into place by the test each time
-set(WITHSYMLINK_INPUT "${TESTDIR}/withsymlink.txt.in")
-set(SRC_FILE "${TESTDIR}/target.txt")
-set(WITHSYMLINK_TXT "Original: ${SRC_FILE}\nSymlink: ${TESTDIR}/symlink.txt\n")
+# Place target file in the build directory so it will exist for std::filesystem
+set(TGTSTR "target.txt")
+file(WRITE "${TESTDIR}/${TGTSTR}" "dummy")
+set(SYMSTR "symlink.txt")
+file(CREATE_LINK "${TESTDIR}/${TGTSTR}" "${TESTDIR}/${SYMSTR}" SYMBOLIC RESULT symlink_ret)
+if(symlink_ret EQUAL 0)
+  # IFF the OS supports making symlinks, we can do this test
 
-
-file(WRITE "${WITHSYMLINK_INPUT}" "${WITHSYMLINK_TXT }")
-file(WRITE "${SRC_FILE}" "dummy")
-
-add_test(NAME PathExpansionReplace
-  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR}
-  -DSTRCLEAR=$<TARGET_FILE:strclear>
-  -P "${CMAKE_CURRENT_SOURCE_DIR}/02_path_expansion.cmake"
-)
-
-
-
+  # Prepare a template of the file that will be altered - this needs to be copied
+  # into place by the test each time
+  set(WITHSYMLINK_INPUT "${TESTDIR}/withsymlink.txt.in")
+  set(SRC_FILE "${TESTDIR}/target.txt")
+  set(WITHSYMLINK_TXT "Original: ${TESTDIR}/${TGTSTR}\nSymlink: ${TESTDIR}/${SYMSTR}\n")
+  file(WRITE "${WITHSYMLINK_INPUT}" "${WITHSYMLINK_TXT}")
 
 add_test(NAME SymlinkPathExpansionReplace
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SRC_FILE}" "${TESTDIR}/target.txt"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${FILE3}" "${TESTDIR}/withsymlink.txt"
-  COMMAND ${CMAKE_COMMAND} -E remove -f "${TESTDIR}/symlink.txt"
-  COMMAND ${CMAKE_COMMAND} -E create_symlink "${TESTDIR}/target.txt" "${TESTDIR}/symlink.txt"
-  COMMAND strclear -v -p "${TESTDIR}/withsymlink.txt" "${TESTDIR}/symlink.txt" "CLEAN"
-)
-set_tests_properties(SymlinkPathExpansionReplace PROPERTIES
-  FIXTURES_SETUP symlink_replace
-)
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR}
+  -DTGTSTR=${SYMSTR} -DSTRCLEAR=$<TARGET_FILE:strclear>
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/03_symlink_path_expansion.cmake"
+  )
+endif()
 
-add_test(NAME VerifySymlinkPathExpansionReplace
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/withsymlink.txt -Dexpected=CLEAN -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifySymlinkPathExpansionReplace PROPERTIES
-  FIXTURES_REQUIRED symlink_replace
-)
+
+if(0)
 
 # --- Test 4: No Replacement Occurs ---
 add_test(NAME NoReplacementIfNoMatch
