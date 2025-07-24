@@ -22,9 +22,9 @@ file(READ "${TF}" file_content)
 # If we were assigned a charcnt executable, look for NULL characters.
 # Otherwise, count EXPSTR instances
 if (CHARCNT)
-  message("${CHARCNT} ${TF}")
+  message("${CHARCNT} ${TF} ${EXPCHAR}")
   execute_process(
-    COMMAND "${CHARCNT}" "${TF}"
+    COMMAND "${CHARCNT}" "${TF}" ${EXPCHAR}
     RESULT_VARIABLE count
   )
   if (count LESS 0)
@@ -40,6 +40,12 @@ endif()
 file(READ "${TF}" file_content)
 if(NOT ${count} EQUAL ${EXPCNT})
   if (CHARCNT)
+    set(nstr)
+    if (EXPCHAR)
+      set(nstr "null")
+    else()
+      set(nstr "${EXPCHAR}")
+    endif()
     message(FATAL_ERROR "File ${TF} does not contain ${EXPCNT} null chars - found ${count}")
   else()
     message(FATAL_ERROR "File ${TF} does not contain expected text: ${EXPCNT}x'${EXPSTR}'\nActual content:\n${file_content}")

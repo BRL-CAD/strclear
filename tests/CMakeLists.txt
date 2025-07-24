@@ -142,7 +142,16 @@ add_test(NAME BinaryFile
   -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
 )
 
-# --- Test 10: Mixed Input List via --files option ---
+# --- Test 10: Binary File Alteration, alternate character ---
+set(CLEAR_CHAR "X")
+add_test(NAME BinaryFileClearChar
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${BINARYFILE}
+  -DTNUM=10 -DTGTSTR=b -DEXPSTR=NULL -DEXPCHAR=${CLEAR_CHAR} -DEXPCNT=2 -DQUIET_RUN=1 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v\;--clear-char=${CLEAR_CHAR}
+  -DCHARCNT=$<TARGET_FILE:charcnt>
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
+)
+
+# --- Test 11: Mixed Input List via --files option ---
 set(MIXTXTFILE "mix_input_list.txt")
 file(WRITE "${TESTDIR}/${MIXTXTFILE}.in" "This is a text input for mixed lists.  foo.")
 set(MIXBINFILE "mix_input_list.bin")
@@ -151,58 +160,43 @@ file(RENAME "${TESTDIR}/${BINARYFILE}" "${TESTDIR}/${MIXBINFILE}.in")
 
 add_test(NAME MixedList
   COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata
-  -DTDIR=${TESTDIR} -DTNUM=10 -DCPYCNT=1 -DQUIET_RUN=1
+  -DTDIR=${TESTDIR} -DTNUM=11 -DCPYCNT=1 -DQUIET_RUN=1
   -DTBINFILE=${MIXBINFILE} -DEXPNULLCNT=6 -DCHARCNT=$<TARGET_FILE:charcnt>
   -DTTXTFILE=${MIXTXTFILE} -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=1
   -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
   -P "${CMAKE_CURRENT_SOURCE_DIR}/run_mixed_list.cmake"
 )
 
-# --- Test 11: Parallel Processing (large mixed list, stress test) ---
+# --- Test 12: Parallel Processing (large mixed list, stress test) ---
 add_test(NAME ParallelProcessing
   COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata
-  -DTDIR=${TESTDIR} -DTNUM=11 -DCPYCNT=50 -DQUIET_RUN=1
+  -DTDIR=${TESTDIR} -DTNUM=12 -DCPYCNT=50 -DQUIET_RUN=1
   -DTBINFILE=${MIXBINFILE} -DEXPNULLCNT=6 -DCHARCNT=$<TARGET_FILE:charcnt>
   -DTTXTFILE=${MIXTXTFILE} -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=1
   -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
   -P "${CMAKE_CURRENT_SOURCE_DIR}/run_mixed_list.cmake"
 )
 
-# --- Test 12: Text file only filtering from a mixed list ---
+# --- Test 13: Text file only filtering from a mixed list ---
 add_test(NAME TextOnlyFiltering
   COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata
-  -DTDIR=${TESTDIR} -DTNUM=12 -DCPYCNT=1 -DQUIET_RUN=1
+  -DTDIR=${TESTDIR} -DTNUM=13 -DCPYCNT=1 -DQUIET_RUN=1
   -DTBINFILE=${MIXBINFILE} -DEXPNULLCNT=3 -DCHARCNT=$<TARGET_FILE:charcnt>
   -DTTXTFILE=${MIXTXTFILE} -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=1
   -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v\;--text-only
   -P "${CMAKE_CURRENT_SOURCE_DIR}/run_mixed_list.cmake"
 )
 
-# --- Test 13: Binary file only filtering from a mixed list ---
+# --- Test 14: Binary file only filtering from a mixed list ---
 add_test(NAME BinaryOnlyFiltering
   COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata
-  -DTDIR=${TESTDIR} -DTNUM=13 -DCPYCNT=1 -DQUIET_RUN=1
+  -DTDIR=${TESTDIR} -DTNUM=14 -DCPYCNT=1 -DQUIET_RUN=1
   -DTBINFILE=${MIXBINFILE} -DEXPNULLCNT=6 -DCHARCNT=$<TARGET_FILE:charcnt>
   -DTTXTFILE=${MIXTXTFILE} -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=0
   -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v\;--binary-only
   -P "${CMAKE_CURRENT_SOURCE_DIR}/run_mixed_list.cmake"
 )
 
-if(0)
-# --- Test 12: --clear-char option for binary file ---
-add_test(NAME BinaryClearChar
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_LIST_DIR}/testdata/cclear.bin" "${TESTDIR}/cclear.bin"
-  COMMAND strclear -v --binary-only --clear_char=X "${TESTDIR}/cclear.bin" foo
-)
-set_tests_properties(BinaryClearChar PROPERTIES
-  FIXTURES_SETUP clearchar
-)
-add_test(NAME VerifyBinaryClearChar
-  COMMAND ${CMAKE_COMMAND} -Dfile=${TESTDIR}/cclear.bin -Dexpected=XXX -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyBinaryClearChar PROPERTIES
-  FIXTURES_REQUIRED clearchar
-)
 
 # --- Test 13: Help and Version Output ---
 add_test(NAME StrclearHelp
@@ -212,23 +206,21 @@ set_tests_properties(StrclearHelp PROPERTIES
   PASS_REGULAR_EXPRESSION "usage|help|clear"
 )
 
-# --- Test 14: Nonexistent File (should fail) ---
+# --- Test 14: Nonexistent File ---
 add_test(NAME NonexistentFile
   COMMAND strclear -v "${TESTDIR}/does_not_exist.txt" foo bar
 )
 
 # --- Test 15: Read-only File (should fail) ---
-set(FILE_RO "${TESTDIR}/readonly.txt")
-file(WRITE "${FILE_RO}" "foo bar")
-execute_process(COMMAND chmod a-w "${FILE_RO}")
-
+# Make a read-only
+set(READONLYFILE "${TESTDIR}/readonly.txt")
+file(WRITE "${READONLYFILE}" "Read_only")
+file(CHMOD "${READONLYFILE}" PERMISSIONS OWNER_READ GROUP_READ WORLD_READ)
 add_test(NAME ReadOnlyFile
-  COMMAND strclear -v "${FILE_RO}" foo bar
+  COMMAND strclear -v "${READONLYFILE}" Read_only Written
 )
-set_tests_properties(ReadOnlyFile PROPERTIES
-  WILL_FAIL TRUE
-)
-endif()
+set_tests_properties(ReadOnlyFile PROPERTIES WILL_FAIL TRUE)
+
 
 # --- Test #: Unicode/UTF-8 Replacement ---
 #     Disabled for now - we don't support Unicode yet
