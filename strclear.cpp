@@ -203,6 +203,9 @@ process_text(const std::string &fname, process_opts &p)
     // Use index and std::string::find for O(N) replacement
     std::vector<std::string>::iterator t_it;
     for (t_it = p.tgt_strs.begin(); t_it != p.tgt_strs.end(); ++t_it) {
+	// If we're replacing a string with itself, that's a no-op
+	if (*t_it == p.replace_str)
+	    continue;
 	size_t pos = 0;
 	while ((pos = nfile_contents.find(*t_it, pos)) != std::string::npos) {
 	    nfile_contents.replace(pos, t_it->size(), p.replace_str);
@@ -260,7 +263,8 @@ process_files(std::map<std::string, std::atomic<int>> &op_tally, std::set<std::s
         return;
 
     // Thread pool parameters
-    unsigned int num_threads = std::thread::hardware_concurrency();
+    unsigned int num_threads = (int)(0.5*(double)std::thread::hardware_concurrency());
+    std::cerr << "num_threads: " << num_threads << "\n";
     if (num_threads == 0)
 	num_threads = 4; // Fallback
     std::queue<std::string> work_queue;
@@ -499,6 +503,8 @@ main(int argc, const char *argv[])
 
 	    // print tally
 	    for (o_it = op_tally.begin(); o_it != op_tally.end(); ++o_it) {
+		if (!o_it->second)
+		    continue;
 		std::cout << o_it->first << ": ";
 		if (o_it->second < 0) {
 		    std::cout << " cleared " << -1*o_it->second << " instances\n";
