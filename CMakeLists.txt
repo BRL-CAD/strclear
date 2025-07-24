@@ -61,9 +61,10 @@ if (O3_COMPILER_FLAG)
 endif (O3_COMPILER_FLAG)
 install(TARGETS strclear DESTINATION ${BIN_DIR})
 
-enable_testing()
-
-add_subdirectory(tests)
+if (STRCLEAR_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif ()
 
 # Local Variables:
 # tab-width: 8
