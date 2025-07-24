@@ -88,6 +88,9 @@ expand_path_forms(const std::string &input) {
     if (!input.length())
 	return forms;
 
+    // Always include original
+    forms.push_back(input);
+
     try {
 	fs::path p(input);
 	if (fs::exists(p) && (fs::is_regular_file(p) || fs::is_symlink(p) || fs::is_directory(p))) {
@@ -109,9 +112,15 @@ expand_path_forms(const std::string &input) {
 	// Ignore errors (broken symlink, permission denied, etc).
     }
 
-    // Always include original last - it's (potentially) a subset of the
-    // others, so only want to replace it after we match the longer forms.
-    forms.push_back(input);
+    // For replacement purposes, we need longest to shortest so shorter
+    // paths don't match as subsets of longer ones and mess up processing
+    std::sort(forms.begin(), forms.end(),
+	        [](const std::string &a, const std::string &b) {
+		   if (a.size() != b.size())
+		      return a.size() > b.size(); // longer first
+		   return a > b; // lexicographical descending
+	        }
+	     );
 
     return forms;
 }
