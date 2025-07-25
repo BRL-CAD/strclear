@@ -234,6 +234,21 @@ set_tests_properties(ReadOnlyFile PROPERTIES WILL_FAIL TRUE)
 #    COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_UTF8} -Dexpected=💧 -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
 #)
 
+###################################################
+#                dirsync tests
+###################################################
+set(WORKING_SYMLINKS 0)
+if(symlink_ret EQUAL 0)
+  set(WORKING_SYMLINKS 1)
+endif()
+add_test(NAME DirSyncSuite
+   COMMAND ${CMAKE_COMMAND} -DDIRSYNC=$<TARGET_FILE:dirsync>
+   -DTESTDIR=${CMAKE_CURRENT_BINARY_DIR}/dirsync_test -DCHECK_SYMLINKS=${WORKING_SYMLINKS}
+   -P ${CMAKE_CURRENT_SOURCE_DIR}/test_dirsync.cmake
+   )
+
+
+
 # Local Variables:
 # tab-width: 8
 # mode: cmake

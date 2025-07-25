@@ -56,13 +56,24 @@ check_cxx_compiler_flag(-O3 O3_COMPILER_FLAG)
 
 find_package(Threads REQUIRED)
 
-add_definitions(-g)
+# Utility to stage files and generate a list of
+# files to process with strclear
+add_executable(dirsync dirsync.cpp)
+if (O3_COMPILER_FLAG)
+  # If we have the O3 flag, use it
+  target_compile_options(dirsync PRIVATE "-O3")
+endif (O3_COMPILER_FLAG)
+install(TARGETS dirsync DESTINATION ${BIN_DIR})
 
+# Utility that modifies files to update or remove
+# embedded path information (in principle it is
+# more general than that, but that is its primary
+# BRL-CAD job.
 add_executable(strclear strclear.cpp)
 target_link_libraries(strclear PRIVATE Threads::Threads)
 if (O3_COMPILER_FLAG)
   # If we have the O3 flag, use it
-  #target_compile_options(strclear PRIVATE "-O3")
+  target_compile_options(strclear PRIVATE "-O3")
 endif (O3_COMPILER_FLAG)
 install(TARGETS strclear DESTINATION ${BIN_DIR})
 
