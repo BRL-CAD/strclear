@@ -260,74 +260,73 @@ void
 process_files(std::map<std::string, std::atomic<int>> &op_tally, std::set<std::string> &files, process_opts &p)
 {
     if (files.empty() || !p.tgt_strs.size())
-        return;
+	return;
 
-    // Thread pool parameters
     unsigned int num_threads = (int)(0.5*(double)std::thread::hardware_concurrency());
     std::cerr << "num_threads: " << num_threads << "\n";
     if (num_threads == 0)
-	num_threads = 4; // Fallback
+	num_threads = 4;
+
     std::queue<std::string> work_queue;
     std::mutex queue_mutex;
     std::condition_variable cv;
-    std::atomic<bool> done(false);
+    bool done = false; // Not atomic—protected by mutex
 
-    // Add all files to the work queue
     for (const auto& fname : files)
-        work_queue.push(fname);
+	work_queue.push(fname);
 
-    // Worker lambda
     auto worker = [&]() {
-        while (true) {
-            std::string fname;
+	while (true) {
+	    std::string fname;
 	    {
 		std::unique_lock<std::mutex> lock(queue_mutex);
-		cv.wait(lock, [&]() { return !work_queue.empty() || done.load(); });
-		// If there is work, process it.
+		cv.wait(lock, [&]() { return !work_queue.empty() || done; });
 		if (!work_queue.empty()) {
 		    fname = work_queue.front();
 		    work_queue.pop();
-		} else if (done.load()) {
-		    // No work and done, so exit.
+		} else if (done) {
 		    return;
 		} else {
-		    // Spurious wakeup, continue waiting.
 		    continue;
 		}
 	    }
 
-            std::ifstream check_fs(fname, std::ios::binary);
-            if (!check_fs.is_open()) {
-                std::cerr << "Error:  unable to open " << fname << "\n";
-                op_tally[fname] = 0;
-                continue;
-            }
-            bool binary_mode = is_binary(check_fs);
-            check_fs.close();
+	    std::ifstream check_fs(fname, std::ios::binary);
+	    if (!check_fs.is_open()) {
+		std::cerr << "Error:  unable to open " << fname << "\n";
+		op_tally[fname] = 0;
+		continue;
+	    }
+	    bool binary_mode = is_binary(check_fs);
+	    check_fs.close();
 
-            int result = 0;
+	    int result = 0;
 	    if (binary_mode && !p.text_only)
 		result = process_binary(fname, p);
 	    if (!binary_mode && !p.binary_only)
 		result = process_text(fname, p);
 	    op_tally[fname] = result;
-        }
+	}
     };
 
-    // Launch thread pool
     std::vector<std::thread> threads;
     for (unsigned int i = 0; i < num_threads; ++i) {
-        threads.emplace_back(worker);
+	threads.emplace_back(worker);
     }
 
-    // Notify all threads in case they're waiting on empty queue
+    // Wait until all work is handed out, then set done and notify all
     {
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        done = true;
+	std::unique_lock<std::mutex> lock(queue_mutex);
+	while (!work_queue.empty()) {
+	    // Wait for all work to be consumed
+	    lock.unlock();
+	    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	    lock.lock();
+	}
+	done = true;
     }
     cv.notify_all();
 
-    // Join threads
     for (auto &t : threads)
 	t.join();
 }
