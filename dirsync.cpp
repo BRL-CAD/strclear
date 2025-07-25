@@ -55,6 +55,7 @@ fnmatch(const std::string& pat, const std::string& str) {
 struct DirSyncOptions {
     bool verbose_initial = false;
     bool skip_fix_symlinks = false;
+    bool match_hidden = false;
     std::optional<std::string> listfile_out;
     std::vector<std::string> glob_excludes;
 };
@@ -318,6 +319,7 @@ main(int argc, char** argv)
 	("l,listfile", "Output list of added and changed paths to file", cxxopts::value<std::string>())
 	("x,exclude", "Exclude pattern (glob, rsync-style, repeatable)", cxxopts::value<std::vector<std::string>>())
 	("nofix-symlinks", "Skip repairing absolute path symlinks to files in src_dir", cxxopts::value<bool>()->default_value("false"))
+	("match-hidden", "Match hidden (. prefixed) files", cxxopts::value<bool>()->default_value("false"))
 	("src", "Source directory", cxxopts::value<std::string>())
 	("dst", "Target directory", cxxopts::value<std::string>())
 	("h,help", "Print help");
@@ -335,16 +337,18 @@ main(int argc, char** argv)
 
     DirSyncOptions options;
     options.verbose_initial = result["verbose"].as<bool>();
-    options.skip_fix_symlinks = result["verbose"].as<bool>();
+    options.skip_fix_symlinks = result["nofix-symlinks"].as<bool>();
+    options.match_hidden = result["match-hidden"].as<bool>();
     if (result.count("listfile")) {
 	options.listfile_out = result["listfile"].as<std::string>();
     }
-    if (result.count("exclude")) {
-	options.glob_excludes = result["exclude"].as<std::vector<std::string>>();
-    }
-    if (options.glob_excludes.empty()) {
+   if (!options.match_hidden) {
 	// Default: exclude hidden files
 	options.glob_excludes.emplace_back("^\\..*");
+    }
+    if (result.count("exclude")) {
+	std::vector<std::string> evec = result["exclude"].as<std::vector<std::string>>();
+	options.glob_excludes.insert(options.glob_excludes.end(), evec.begin(), evec.end());
     }
 
     fs::path src = result["src"].as<std::string>();
