@@ -26,9 +26,26 @@
 #include <optional>
 #include <string>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 #include "cxxopts.hpp"
 
 namespace fs = std::filesystem;
+
+// --- Sigh - can't tell on all platforms with just C++ ---
+inline bool
+is_hidden(const std::filesystem::path& p) {
+#ifdef _WIN32
+    DWORD attrs = GetFileAttributesW(p.wstring().c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES) return false;
+    if (attrs & FILE_ATTRIBUTE_HIDDEN) return true;
+#endif
+    const std::string s = p.filename().string();
+    return !s.empty() && s[0] == '.';
+}
 
 // --- Minimalist portable fnmatch ---
 inline bool
@@ -160,12 +177,19 @@ gather_paths(const fs::path& root, std::set<fs::path>& out, const DirSyncOptions
 {
     for (auto& e : fs::directory_iterator(root)) {
 	auto rel = e.path().lexically_relative(root);
+
+	// Skip hidden files/dirs if option is set
+        if (options.skip_hidden && is_hidden(rel))
+            continue;
+
 	if (!is_excluded(rel, options))
 	    out.insert(rel);
 
 	if (fs::is_directory(e.path()) && !fs::is_symlink(e.path())) {
 	    for (auto& se : fs::recursive_directory_iterator(e.path())) {
 		auto srel = se.path().lexically_relative(root);
+		if (options.skip_hidden && is_hidden(srel))
+		    continue;
 		if (!is_excluded(srel, options))
 		    out.insert(srel);
 	    }
@@ -375,10 +399,6 @@ main(int argc, char** argv)
     options.skip_hidden = result["skip-hidden"].as<bool>();
     if (result.count("listfile")) {
 	options.listfile_out = result["listfile"].as<std::string>();
-    }
-    if (options.skip_hidden) {
-	options.glob_excludes.push_back("[.]*");   // top level
-	options.glob_excludes.push_back("*/[.]*"); // subdirectories
     }
     if (result.count("exclude")) {
 	std::vector<std::string> evec = result["exclude"].as<std::vector<std::string>>();
