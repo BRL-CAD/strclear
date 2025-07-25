@@ -18,7 +18,6 @@
 #include <iostream>
 #include <set>
 #include <vector>
-#include <regex>
 #include <chrono>
 #include <cstring>
 #include <cstdlib>
@@ -31,22 +30,43 @@
 
 namespace fs = std::filesystem;
 
+// --- Minimal portable fnmatch (supports *, ?) ---
+inline bool
+fnmatch(const std::string& pat, const std::string& str) {
+    size_t p = 0, s = 0, star = std::string::npos, ss = 0;
+    while (s < str.size()) {
+	if (p < pat.size() && (pat[p] == '?' || pat[p] == str[s])) {
+	    ++p; ++s;
+	} else if (p < pat.size() && pat[p] == '*') {
+	    star = p++;
+	    ss = s;
+	} else if (star != std::string::npos) {
+	    p = star + 1;
+	    s = ++ss;
+	} else {
+	    return false;
+	}
+    }
+    while (p < pat.size() && pat[p] == '*') ++p;
+    return p == pat.size();
+}
+
 // --- Struct to hold program options ---
 struct DirSyncOptions {
     bool verbose_initial = false;
+    bool skip_fix_symlinks = false;
     std::optional<std::string> listfile_out;
-    std::vector<std::regex> excl;
+    std::vector<std::string> glob_excludes;
 };
 
 // --- Utility functions ---
 bool
-is_excluded(const fs::path& rel, const std::vector<std::regex>& excl) {
-    return std::any_of(
-	    excl.begin(), excl.end(),
-	    [&](const std::regex& rx) {
-	    return std::regex_match(rel.string(), rx);
-	    }
-	    );
+is_excluded(const fs::path& rel, const DirSyncOptions& options) {
+    std::string relstr = rel.generic_string();
+    for (const auto& pat : options.glob_excludes) {
+	if (fnmatch(pat, relstr)) return true;
+    }
+    return false;
 }
 
 void
@@ -63,24 +83,55 @@ copy_mtime(const fs::path& dst, const fs::path& src) {
 	fs::last_write_time(dst, t, ec);
 }
 
-void file_copy(const fs::path& src, const fs::path& dst) {
+fs::path
+make_temp_file(const fs::path& dir) {
+    for (int i = 0; i < 100; ++i) {
+	std::string name = ".dirsync_tmp_" + std::to_string(rand()) + "_" + std::to_string(i);
+	fs::path tmp = dir / name;
+	std::error_code ec;
+	if (!fs::exists(tmp, ec)) {
+	    std::ofstream ofs(tmp);
+	    if (ofs) return tmp;
+	}
+    }
+    throw std::runtime_error("Unable to create temp file in " + dir.string());
+}
+
+// Atomic file update: write to temp, then rename
+void
+atomic_copy_file(const fs::path& src, const fs::path& dst) {
     std::error_code ec;
-    fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
+    fs::create_directories(dst.parent_path(), ec);
+    fs::path tmp = make_temp_file(dst.parent_path());
+    {
+	std::ifstream in(src, std::ios::binary);
+	std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+	std::vector<char> buf(1 << 20);
+	while (in) {
+	    in.read(buf.data(), buf.size());
+	    out.write(buf.data(), in.gcount());
+	}
+    }
+    fs::rename(tmp, dst, ec);
+    if (ec) {
+	std::cerr << "Error renaming " << tmp << " to " << dst << ": " << ec.message() << "\n";
+	fs::remove(tmp, ec);
+    }
 }
 
 // --- Collect all relative paths (including symlinks) ---
 void
-gather_paths(const fs::path& root, std::set<fs::path>& out, const std::vector<std::regex>& excl)
+gather_paths(const fs::path& root, std::set<fs::path>& out, const DirSyncOptions& options)
 {
     for (auto& e : fs::directory_iterator(root)) {
 	auto rel = e.path().lexically_relative(root);
-	if (!is_excluded(rel, excl))
+	if (!is_excluded(rel, options))
 	    out.insert(rel);
 
 	if (fs::is_directory(e.path()) && !fs::is_symlink(e.path())) {
 	    for (auto& se : fs::recursive_directory_iterator(e.path())) {
 		auto srel = se.path().lexically_relative(root);
-		if (!is_excluded(srel, excl))
+		if (!is_excluded(srel, options))
 		    out.insert(srel);
 	    }
 	}
@@ -88,19 +139,17 @@ gather_paths(const fs::path& root, std::set<fs::path>& out, const std::vector<st
 }
 
 // --- Sync using mtime+size only ---
-// Verbose applies to initial copy (add actions) if target dir is empty or does not exist
-// If listfile_out is set, write (canonic(target_dir) / rel_path) for all added and changed
 void
 sync_dirs(const fs::path& src, const fs::path& dst, const DirSyncOptions& options)
 {
     std::set<fs::path> srcs, dsts;
-    std::vector<fs::path> listfile_paths; // Collect added & changed paths for optional write
+    std::vector<fs::path> listfile_paths;
 
-    gather_paths(src, srcs, options.excl);
+    gather_paths(src, srcs, options);
 
     bool dst_exists = fs::exists(dst);
     if (dst_exists)
-	gather_paths(dst, dsts, options.excl);
+	gather_paths(dst, dsts, options);
 
     bool initial_copy = !dst_exists || dsts.empty();
 
@@ -166,8 +215,7 @@ sync_dirs(const fs::path& src, const fs::path& dst, const DirSyncOptions& option
 		std::cout << "[add] link " << dp << " -> " << tgt << "\n";
 	    if (options.listfile_out) listfile_paths.push_back(canonical_dst / p);
 	} else if (fs::is_regular_file(sp)) {
-	    fs::create_directories(dp.parent_path(), ec);
-	    file_copy(sp, dp);
+	    atomic_copy_file(sp, dp);
 	    copy_perms(sp, dp);
 	    copy_mtime(dp, sp);
 	    if (!initial_copy || options.verbose_initial)
@@ -179,7 +227,7 @@ sync_dirs(const fs::path& src, const fs::path& dst, const DirSyncOptions& option
 	auto sp = src / p, dp = dst / p;
 	std::error_code ec;
 	if (fs::is_regular_file(sp)) {
-	    file_copy(sp, dp);
+	    atomic_copy_file(sp, dp);
 	    copy_perms(sp, dp);
 	    copy_mtime(dp, sp);
 	    std::cout << "[chg] file " << dp << "\n";
@@ -260,7 +308,7 @@ fix_symlinks(const fs::path& dst_root, const fs::path& src_root)
     }
 }
 
-    int
+int
 main(int argc, char** argv)
 {
     cxxopts::Options opts("dirsync", "Directory sync utility for BRL-CAD build trees");
@@ -268,7 +316,8 @@ main(int argc, char** argv)
     opts.add_options()
 	("v,verbose", "Enable verbose logging on initial copy", cxxopts::value<bool>()->default_value("false"))
 	("l,listfile", "Output list of added and changed paths to file", cxxopts::value<std::string>())
-	("x,exclude", "Regex for exclude pattern (repeatable)", cxxopts::value<std::vector<std::string>>())
+	("x,exclude", "Exclude pattern (glob, rsync-style, repeatable)", cxxopts::value<std::vector<std::string>>())
+	("nofix-symlinks", "Skip repairing absolute path symlinks to files in src_dir", cxxopts::value<bool>()->default_value("false"))
 	("src", "Source directory", cxxopts::value<std::string>())
 	("dst", "Target directory", cxxopts::value<std::string>())
 	("h,help", "Print help");
@@ -286,16 +335,16 @@ main(int argc, char** argv)
 
     DirSyncOptions options;
     options.verbose_initial = result["verbose"].as<bool>();
+    options.skip_fix_symlinks = result["verbose"].as<bool>();
     if (result.count("listfile")) {
 	options.listfile_out = result["listfile"].as<std::string>();
     }
     if (result.count("exclude")) {
-	for (const auto& ex : result["exclude"].as<std::vector<std::string>>()) {
-	    options.excl.emplace_back(ex);
-	}
-    } else {
+	options.glob_excludes = result["exclude"].as<std::vector<std::string>>();
+    }
+    if (options.glob_excludes.empty()) {
 	// Default: exclude hidden files
-	options.excl.emplace_back("^\\..*");
+	options.glob_excludes.emplace_back("^\\..*");
     }
 
     fs::path src = result["src"].as<std::string>();
@@ -303,14 +352,11 @@ main(int argc, char** argv)
 
     std::cout << "Sync: " << src << " -> " << dst << "\n";
     sync_dirs(src, dst, options);
-
-    // Optionally fix relative symlinks (todo - make this an actual option, but default to on...)
-    fix_symlinks(dst,src);
-
+    if (!options.skip_fix_symlinks)
+	fix_symlinks(dst, src);
     std::cout << "Done.\n";
     return 0;
 }
-
 // Local Variables:
 // tab-width: 8
 // mode: C++
