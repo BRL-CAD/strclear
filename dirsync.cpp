@@ -42,11 +42,11 @@ struct DirSyncOptions {
 bool
 is_excluded(const fs::path& rel, const std::vector<std::regex>& excl) {
     return std::any_of(
-        excl.begin(), excl.end(),
-        [&](const std::regex& rx) {
-            return std::regex_match(rel.string(), rx);
-        }
-    );
+	    excl.begin(), excl.end(),
+	    [&](const std::regex& rx) {
+	    return std::regex_match(rel.string(), rx);
+	    }
+	    );
 }
 
 void
@@ -130,8 +130,8 @@ sync_dirs(const fs::path& src, const fs::path& dst, const DirSyncOptions& option
 		    mod.insert(p);
 	    }
 	    else if ((fs::is_regular_file(sp) != fs::is_regular_file(dp)) ||
-		     (fs::is_directory(sp) != fs::is_directory(dp)) ||
-		     (fs::is_symlink(sp) != fs::is_symlink(dp)))
+		    (fs::is_directory(sp) != fs::is_directory(dp)) ||
+		    (fs::is_symlink(sp) != fs::is_symlink(dp)))
 		mod.insert(p);
 	}
     }
@@ -155,7 +155,7 @@ sync_dirs(const fs::path& src, const fs::path& dst, const DirSyncOptions& option
 	    fs::create_directories(dp, ec);
 	    copy_perms(sp, dp);
 	    if (!initial_copy || options.verbose_initial)
-	        std::cout << "[add] dir " << dp << "\n";
+		std::cout << "[add] dir " << dp << "\n";
 	    if (options.listfile_out) listfile_paths.push_back(canonical_dst / p);
 	} else if (fs::is_symlink(sp)) {
 	    auto tgt = fs::read_symlink(sp, ec);
@@ -163,7 +163,7 @@ sync_dirs(const fs::path& src, const fs::path& dst, const DirSyncOptions& option
 	    fs::remove(dp, ec);
 	    fs::create_symlink(tgt, dp, ec);
 	    if (!initial_copy || options.verbose_initial)
-	        std::cout << "[add] link " << dp << " -> " << tgt << "\n";
+		std::cout << "[add] link " << dp << " -> " << tgt << "\n";
 	    if (options.listfile_out) listfile_paths.push_back(canonical_dst / p);
 	} else if (fs::is_regular_file(sp)) {
 	    fs::create_directories(dp.parent_path(), ec);
@@ -171,7 +171,7 @@ sync_dirs(const fs::path& src, const fs::path& dst, const DirSyncOptions& option
 	    copy_perms(sp, dp);
 	    copy_mtime(dp, sp);
 	    if (!initial_copy || options.verbose_initial)
-	        std::cout << "[add] file " << dp << "\n";
+		std::cout << "[add] file " << dp << "\n";
 	    if (options.listfile_out) listfile_paths.push_back(canonical_dst / p);
 	}
     }
@@ -201,13 +201,13 @@ sync_dirs(const fs::path& src, const fs::path& dst, const DirSyncOptions& option
 
     // Write listfile if requested
     if (options.listfile_out) {
-        std::ofstream lf(*options.listfile_out);
-        if (!lf) {
-            std::cerr << "Error: couldn't open list file: " << *options.listfile_out << "\n";
-        } else {
-            for (const auto& path : listfile_paths)
-                lf << path.string() << "\n";
-        }
+	std::ofstream lf(*options.listfile_out);
+	if (!lf) {
+	    std::cerr << "Error: couldn't open list file: " << *options.listfile_out << "\n";
+	} else {
+	    for (const auto& path : listfile_paths)
+		lf << path.string() << "\n";
+	}
     }
 }
 
@@ -219,57 +219,59 @@ fix_symlinks(const fs::path& dst_root, const fs::path& src_root)
     auto canonical_dst = fs::weakly_canonical(dst_root);
 
     for (auto& entry : fs::recursive_directory_iterator(dst_root)) {
-        if (!fs::is_symlink(entry.path()))
-            continue;
+	if (!fs::is_symlink(entry.path()))
+	    continue;
 
-        std::error_code ec;
-        fs::path link_target = fs::read_symlink(entry.path(), ec);
-        if (ec) continue;
+	std::error_code ec;
+	fs::path link_target = fs::read_symlink(entry.path(), ec);
+	if (ec) continue;
 
-        if (link_target.is_absolute()) {
-            // Is this link targeting a file inside the source tree?
-            auto link_target_canon = fs::weakly_canonical(link_target, ec);
-            if (ec) continue;
+	if (!link_target.is_absolute())
+	    continue;
 
-            // Check if link_target_canon begins with canonical_src
-            auto mismatch = std::mismatch(
-                canonical_src.begin(), canonical_src.end(),
-                link_target_canon.begin()
-            );
+	// Is this link targeting a file inside the source tree?
+	auto link_target_canon = fs::weakly_canonical(link_target, ec);
+	if (ec) continue;
 
-            if (mismatch.first == canonical_src.end()) {
-                // Get the path inside the source tree
-                fs::path inside_src_rel;
-                for (; mismatch.second != link_target_canon.end(); ++mismatch.second)
-                    inside_src_rel /= *mismatch.second;
+	// Check if link_target_canon begins with canonical_src
+	auto mismatch = std::mismatch(
+		canonical_src.begin(), canonical_src.end(),
+		link_target_canon.begin()
+		);
 
-                // Compute the equivalent target in the dst tree
-                fs::path dst_target = canonical_dst / inside_src_rel;
+	if (mismatch.first != canonical_src.end())
+	    continue;
 
-                // Compute the relative path from symlink's parent to new target
-                fs::path rel = dst_target.lexically_relative(entry.path().parent_path());
+	// Get the path inside the source tree
+	fs::path inside_src_rel;
+	for (; mismatch.second != link_target_canon.end(); ++mismatch.second)
+	    inside_src_rel /= *mismatch.second;
 
-                // Replace symlink
-                fs::remove(entry.path(), ec);
-                fs::create_symlink(rel, entry.path(), ec);
-                std::cout << "[fixlink] " << entry.path() << " -> " << rel << "\n";
-            }
-        }
+	// Compute the equivalent target in the dst tree
+	fs::path dst_target = canonical_dst / inside_src_rel;
+
+	// Compute the relative path from symlink's parent to new target
+	fs::path rel = dst_target.lexically_relative(entry.path().parent_path());
+
+	// Replace symlink
+	fs::remove(entry.path(), ec);
+	fs::create_symlink(rel, entry.path(), ec);
+	std::cout << "[fixlink] " << entry.path() << " -> " << rel << "\n";
     }
 }
 
-int
+    int
 main(int argc, char** argv)
 {
     cxxopts::Options opts("dirsync", "Directory sync utility for BRL-CAD build trees");
 
     opts.add_options()
-      ("v,verbose", "Enable verbose logging on initial copy", cxxopts::value<bool>()->default_value("false"))
-      ("l,listfile", "Output list of added and changed paths to file", cxxopts::value<std::string>())
-      ("x,exclude", "Regex for exclude pattern (repeatable)", cxxopts::value<std::vector<std::string>>())
-      ("src", "Source directory", cxxopts::value<std::string>())
-      ("dst", "Target directory", cxxopts::value<std::string>())
-      ("h,help", "Print help");
+	("v,verbose", "Enable verbose logging on initial copy", cxxopts::value<bool>()->default_value("false"))
+	("l,listfile", "Output list of added and changed paths to file", cxxopts::value<std::string>())
+	("x,exclude", "Regex for exclude pattern (repeatable)", cxxopts::value<std::vector<std::string>>())
+	("src", "Source directory", cxxopts::value<std::string>())
+	("dst", "Target directory", cxxopts::value<std::string>())
+	("h,help", "Print help");
 
     opts.parse_positional({"src", "dst"});
     opts.positional_help("<src> <dst>");
@@ -278,22 +280,22 @@ main(int argc, char** argv)
     auto result = opts.parse(argc, argv);
 
     if (result.count("help") || !result.count("src") || !result.count("dst")) {
-        std::cerr << opts.help() << std::endl;
-        return 1;
+	std::cerr << opts.help() << std::endl;
+	return 1;
     }
 
     DirSyncOptions options;
     options.verbose_initial = result["verbose"].as<bool>();
     if (result.count("listfile")) {
-        options.listfile_out = result["listfile"].as<std::string>();
+	options.listfile_out = result["listfile"].as<std::string>();
     }
     if (result.count("exclude")) {
-        for (const auto& ex : result["exclude"].as<std::vector<std::string>>()) {
-            options.excl.emplace_back(ex);
-        }
+	for (const auto& ex : result["exclude"].as<std::vector<std::string>>()) {
+	    options.excl.emplace_back(ex);
+	}
     } else {
-        // Default: exclude hidden files
-        options.excl.emplace_back("^\\..*");
+	// Default: exclude hidden files
+	options.excl.emplace_back("^\\..*");
     }
 
     fs::path src = result["src"].as<std::string>();
