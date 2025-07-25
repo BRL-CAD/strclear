@@ -30,32 +30,66 @@
 
 namespace fs = std::filesystem;
 
-// --- Minimal portable fnmatch (supports *, ?) ---
+// --- Minimalist portable fnmatch ---
 inline bool
-fnmatch(const std::string& pat, const std::string& str) {
-    size_t p = 0, s = 0, star = std::string::npos, ss = 0;
-    while (s < str.size()) {
-	if (p < pat.size() && (pat[p] == '?' || pat[p] == str[s])) {
-	    ++p; ++s;
-	} else if (p < pat.size() && pat[p] == '*') {
-	    star = p++;
-	    ss = s;
-	} else if (star != std::string::npos) {
-	    p = star + 1;
-	    s = ++ss;
+fnmatch(const std::string& pat, const std::string& str, size_t p = 0, size_t s = 0) {
+    while (p < pat.size() || s < str.size()) {
+	if (p < pat.size()) {
+	    if (pat[p] == '*') {
+		// Collapse multiple '*'
+		while (p+1 < pat.size() && pat[p+1] == '*') ++p;
+		// '*' at end matches any tail
+		if (p+1 == pat.size()) return true;
+		for (size_t skip = 0; s + skip <= str.size(); ++skip) {
+		    if (fnmatch(pat, str, p+1, s+skip)) return true;
+		}
+		return false;
+	    } else if (pat[p] == '?') {
+		if (s >= str.size()) return false;
+		++p; ++s;
+	    } else if (pat[p] == '[') {
+		++p;
+		bool negate = false;
+		if (p < pat.size() && (pat[p] == '!' || pat[p] == '^')) {
+		    negate = true; ++p;
+		}
+		bool match = false, first = true;
+		char last_char = 0;
+		while (p < pat.size() && pat[p] != ']') {
+		    if (!first && pat[p] == '-' && p+1 < pat.size() && pat[p+1] != ']') {
+			++p;
+			char range_end = pat[p++];
+			if (s < str.size() && str[s] >= last_char && str[s] <= range_end)
+			    match = true;
+			last_char = 0;
+		    } else {
+			if (s < str.size() && str[s] == pat[p])
+			    match = true;
+			last_char = pat[p++];
+			first = false;
+		    }
+		}
+		while (p < pat.size() && pat[p] != ']') ++p;
+		if (p < pat.size() && pat[p] == ']') ++p;
+		if (s >= str.size()) return false;
+		if (match == negate) return false;
+		++s;
+	    } else {
+		if (s >= str.size() || pat[p] != str[s]) return false;
+		++p; ++s;
+	    }
 	} else {
 	    return false;
 	}
     }
-    while (p < pat.size() && pat[p] == '*') ++p;
-    return p == pat.size();
+    return p == pat.size() && s == str.size();
 }
 
 // --- Struct to hold program options ---
 struct DirSyncOptions {
     bool verbose_initial = false;
     bool skip_fix_symlinks = false;
-    bool match_hidden = false;
+    bool skip_hidden = false;
     std::optional<std::string> listfile_out;
     std::vector<std::string> glob_excludes;
 };
@@ -317,9 +351,9 @@ main(int argc, char** argv)
     opts.add_options()
 	("v,verbose", "Enable verbose logging on initial copy", cxxopts::value<bool>()->default_value("false"))
 	("l,listfile", "Output list of added and changed paths to file", cxxopts::value<std::string>())
-	("x,exclude", "Exclude pattern (glob, rsync-style, repeatable)", cxxopts::value<std::vector<std::string>>())
+	("x,exclude", "Exclude pattern (glob, minimalist - no brackets or recursive directory matching)", cxxopts::value<std::vector<std::string>>())
 	("nofix-symlinks", "Skip repairing absolute path symlinks to files in src_dir", cxxopts::value<bool>()->default_value("false"))
-	("match-hidden", "Match hidden (. prefixed) files", cxxopts::value<bool>()->default_value("false"))
+	("skip-hidden", "Skip copying files starting with the \".\" character", cxxopts::value<bool>()->default_value("false"))
 	("src", "Source directory", cxxopts::value<std::string>())
 	("dst", "Target directory", cxxopts::value<std::string>())
 	("h,help", "Print help");
@@ -338,13 +372,13 @@ main(int argc, char** argv)
     DirSyncOptions options;
     options.verbose_initial = result["verbose"].as<bool>();
     options.skip_fix_symlinks = result["nofix-symlinks"].as<bool>();
-    options.match_hidden = result["match-hidden"].as<bool>();
+    options.skip_hidden = result["skip-hidden"].as<bool>();
     if (result.count("listfile")) {
 	options.listfile_out = result["listfile"].as<std::string>();
     }
-   if (!options.match_hidden) {
-	// Default: exclude hidden files
-	options.glob_excludes.emplace_back("^\\..*");
+    if (options.skip_hidden) {
+	options.glob_excludes.push_back("[.]*");   // top level
+	options.glob_excludes.push_back("*/[.]*"); // subdirectories
     }
     if (result.count("exclude")) {
 	std::vector<std::string> evec = result["exclude"].as<std::vector<std::string>>();
