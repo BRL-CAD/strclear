@@ -20,6 +20,9 @@ add_executable(charcnt charcnt.cpp)
 # Directory for test artifacts
 set(TESTDIR "${CMAKE_CURRENT_BINARY_DIR}/testfiles")
 file(MAKE_DIRECTORY "${TESTDIR}")
+# We need to use this rather than cmake_path(NORMALIZE) to resolve symlinks.
+# Do this AFTER file(MAKE_DIRECTORY) is called.
+file(REAL_PATH "${TESTDIR}" TESTDIR)
 
 # Helper function to compare file contents
 function(assert_file_contains file expected_text)
@@ -241,9 +244,15 @@ set(WORKING_SYMLINKS 0)
 if(symlink_ret EQUAL 0)
   set(WORKING_SYMLINKS 1)
 endif()
+set(TESTDIR "${CMAKE_CURRENT_BINARY_DIR}/dirsync_test")
+file(MAKE_DIRECTORY "${TESTDIR}")
+# We need to use this rather than cmake_path(NORMALIZE) to resolve symlinks.
+# Do this AFTER file(MAKE_DIRECTORY) is called.
+file(REAL_PATH "${TESTDIR}" TESTDIR)
+
 add_test(NAME DirSyncSuite
    COMMAND ${CMAKE_COMMAND} -DDIRSYNC=$<TARGET_FILE:dirsync>
-   -DTESTDIR=${CMAKE_CURRENT_BINARY_DIR}/dirsync_test -DCHECK_SYMLINKS=${WORKING_SYMLINKS}
+   -DTESTDIR=${TESTDIR} -DCHECK_SYMLINKS=${WORKING_SYMLINKS}
    -P ${CMAKE_CURRENT_SOURCE_DIR}/test_dirsync.cmake
    )
 
