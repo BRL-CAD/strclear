@@ -44,9 +44,8 @@
  * remove the target string if there is no replacement string - it is
  * "replaced" with the empty string.)
  *
- * If the -p option is specified and target_str is a filesystem path, the
- * target string is expanded into the various filesystem path forms and the
- * code attempts to replace (or clear) them all.
+ * The --classify mode emits JSON Lines records for build systems that need to
+ * batch text/binary detection.
  */
 
 #include <algorithm>
@@ -68,20 +67,19 @@
 #include <vector>
 #include "cxxopts.hpp"
 
-class process_opts {
-    public:
-	bool binary_only = false;
-	bool binary_test_mode = false;
-	bool clear_mode = false;
-	bool classify_mode = false;
-	bool force_binary = false;
-	bool force_text = false;
-	bool path_mode = false;
-	bool text_only = false;
-	bool verbose = false;
-	char clear_char = '\0';
-	std::vector<std::string> tgt_strs;
-	std::string replace_str;
+struct process_opts {
+    bool binary_only = false;
+    bool binary_test_mode = false;
+    bool clear_mode = false;
+    bool classify_mode = false;
+    bool force_binary = false;
+    bool force_text = false;
+    bool path_mode = false;
+    bool text_only = false;
+    bool verbose = false;
+    char clear_char = '\0';
+    std::vector<std::string> tgt_strs;
+    std::string replace_str;
 };
 
 static std::string
@@ -122,11 +120,6 @@ json_escape(const std::string &input)
     return out.str();
 }
 
-/* Simple, robust work queue:
- * - push returns false if the queue has been closed (prevents silent loss).
- * - pop blocks until an item is available or the queue is closed and drained.
- * - close signals no more pushes; remaining items will be drained.
- */
 template <typename T>
 class WorkQueue {
     std::queue<T> q;
@@ -135,7 +128,6 @@ class WorkQueue {
     bool closed = false;
 
 public:
-    // Returns false if already closed and the item was not enqueued
     bool push(T v) {
 	std::lock_guard<std::mutex> lg(m);
 	if (closed) return false;
@@ -144,7 +136,6 @@ public:
 	return true;
     }
 
-    // Returns false when the queue is closed and empty (no more work)
     bool pop(T &out) {
 	std::unique_lock<std::mutex> lk(m);
 	cv.wait(lk, [&]{ return closed || !q.empty(); });
@@ -168,23 +159,20 @@ expand_path_forms(const std::string &input) {
     if (!input.length())
 	return forms;
 
-    // Always include original
+    // Always include the original spelling.
     forms.push_back(input);
 
     try {
 	fs::path p(input);
 	if (fs::exists(p) && (fs::is_regular_file(p) || fs::is_symlink(p) || fs::is_directory(p))) {
-	    // Absolute form
 	    std::error_code ec;
 	    auto abs = fs::absolute(p, ec).string();
 	    if (!abs.empty() && abs != input) forms.push_back(abs);
 
-	    // Canonical form (resolves symlinks, may fail if not accessible)
 	    ec.clear();
 	    auto canon = fs::canonical(p, ec).string();
 	    if (!ec && !canon.empty() && canon != input && canon != abs) forms.push_back(canon);
 
-	    // Normalized (lexically, does not resolve symlinks)
 	    auto norm = p.lexically_normal().string();
 	    if (!norm.empty() && norm != input && norm != abs && norm != canon) forms.push_back(norm);
 	}
@@ -192,8 +180,8 @@ expand_path_forms(const std::string &input) {
 	// Ignore errors (broken symlink, permission denied, etc).
     }
 
-    // For replacement purposes, we need longest to shortest so shorter
-    // paths don't match as subsets of longer ones and mess up processing
+    // Match longer paths first so shorter path spellings do not partially
+    // replace longer ones.
     std::sort(forms.begin(), forms.end(),
 	        [](const std::string &a, const std::string &b) {
 		   if (a.size() != b.size())
@@ -306,7 +294,6 @@ process_text(const std::string &fname, process_opts &p)
     return change_cnt;
 }
 
-// Text vs. binary file heuristic (generated with GPT-4.1 assistance)
 bool
 is_binary(std::ifstream &file, size_t max_check = 4096, double nontext_threshold = 0.1)
 {
@@ -318,10 +305,10 @@ is_binary(std::ifstream &file, size_t max_check = 4096, double nontext_threshold
 	// Null byte: almost always binary
 	if (c == '\0')
 	    return true;
-	// Accept printable ASCII (32–126), CR, LF, TAB, FF
+	// Accept printable ASCII, CR, LF, TAB and FF.
 	if ((c >= 32 && c <= 126) || c == '\n' || c == '\r' || c == '\t' || c == '\f')
 	    continue;
-	// Accept valid 8-bit UTF-8 lead bytes (for text, this is not 100% but helps)
+	// Treat common UTF-8 lead bytes as text unless other bytes dominate.
 	if ((unsigned char)c >= 0xC2 && (unsigned char)c <= 0xF4)
 	    continue;
 	n_nontext++;
@@ -330,15 +317,9 @@ is_binary(std::ifstream &file, size_t max_check = 4096, double nontext_threshold
     if (n_read == 0)
 	return false; // empty file: treat as text
 
-    // If more than 10% non-text, guess binary
     return (double)n_nontext / n_read > nontext_threshold;
 }
 
-/* Improved, race-free parallel processing:
- * - Uses WorkQueue to push all files, then close, then workers pop until done.
- * - Pre-populates op_tally with all filenames before starting threads to avoid
- *   concurrent insertion into the std::map (only atomic stores occur in workers).
- */
 void
 process_files(std::map<std::string, std::atomic<int>> &op_tally, std::set<std::string> &files, process_opts &p)
 {
@@ -350,7 +331,7 @@ process_files(std::map<std::string, std::atomic<int>> &op_tally, std::set<std::s
 	num_threads = 4;
     num_threads = std::min(num_threads, (unsigned int)files.size());
 
-    // Pre-populate op_tally entries to avoid concurrent map insertions
+    // Pre-populate op_tally entries so worker threads only update atomics.
     for (const auto &fname : files) {
 	(void)op_tally[fname];           // default-construct atomic<int> (0)
 	op_tally[fname].store(0, std::memory_order_relaxed);
@@ -401,27 +382,20 @@ process_files(std::map<std::string, std::atomic<int>> &op_tally, std::set<std::s
 int
 main(int argc, const char *argv[])
 {
-	process_opts p;
-	bool legacy_binary_mode = false;
-	std::string file_list;
+    process_opts p;
+    bool legacy_binary_mode = false;
+    std::string file_list;
 
     cxxopts::Options options(argv[0],
-	    "A program to clear or replace strings in files.\n"
+	    "Clear or replace strings in files.\n"
 	    "\n"
 	    "strclear -B <filename>\n"
+	    "strclear --classify [--files <filelist> | <filename> ...]\n"
 	    "strclear <filename> <target_str> [replacement_str]\n"
 	    "strclear -f <filelist> <target_str> [replacement_str]\n"
 	    "\n"
-	    "When the -p option is added, a target string supplied for clearing\n"
-	    "or replacement appears to be a filesystem path (e.g., an existing file\n"
-	    "or directory), this tool will automatically search for and operate on\n"
-	    "all recognized forms of that path within the file. This includes:\n"
-	    "  - the original path string as supplied\n"
-	    "  - its absolute path form\n"
-	    "  - its canonical (fully resolved, with symlinks removed) form\n"
-	    "  - its normalized (syntactically simplified) form\n"
-	    "This ensures that both relative and absolute references, as well as\n"
-	    "symlinked and normalized forms of the same file, are detected and processed.\n"
+	    "-B returns 0 for binary input and 1 for text input.\n"
+	    "--classify emits one JSON record per input path.\n"
 	    );
 
     std::vector<std::string> nonopts;
@@ -431,14 +405,14 @@ main(int argc, const char *argv[])
 	options
 	    .set_width(70)
 	    .add_options()
-	    ("B,is_binary",   "Test the file to see if it is a binary file (return 1 if yes, 0 if no.)", cxxopts::value<bool>(p.binary_test_mode))
-	    ("t,text",        "Refuse to run unless the input file is a text file.", cxxopts::value<bool>(p.force_text))
+	    ("B,is_binary",   "Test one file: return 0 for binary input and 1 for text input.", cxxopts::value<bool>(p.binary_test_mode))
+	    ("t,text",        "Compatibility alias: force text replacement mode.", cxxopts::value<bool>(p.force_text))
 	    ("text-only",     "Skip inputs that are binary files.", cxxopts::value<bool>(p.text_only))
-	    ("b,binary",      "Treat the input file as binary.", cxxopts::value<bool>(legacy_binary_mode))
+	    ("b,binary",      "Compatibility alias: force binary clear mode.", cxxopts::value<bool>(legacy_binary_mode))
 	    ("binary-only",   "Skip inputs that are text files.", cxxopts::value<bool>(p.binary_only))
-	    ("c,clear",       "Replace strings in files by overwriting a specified character.", cxxopts::value<bool>(p.clear_mode))
+	    ("c,clear",       "Compatibility option for binary clear mode.", cxxopts::value<bool>(p.clear_mode))
 	    ("classify",      "Classify files as TEXT or BINARY, one JSON record per path.", cxxopts::value<bool>(p.classify_mode))
-	    ("r,replace",     "Replace one string with another in text mode.", cxxopts::value<bool>())
+	    ("r,replace",     "Compatibility option for text replacement mode.", cxxopts::value<bool>())
 	    ("f,files",       "Provide a list of files to process.", cxxopts::value<std::string>(file_list))
 	    ("clear-char",    "Specify a character to use when clearing strings in files", cxxopts::value<char>(p.clear_char))
 	    ("clear_char",    "Specify a character to use when clearing strings in files", cxxopts::value<char>(p.clear_char))
@@ -477,6 +451,15 @@ main(int argc, const char *argv[])
     // Do some option checking and validation
     /////////////////////////////////////////
 
+    if (p.classify_mode && p.binary_test_mode) {
+	std::cerr << "Error:  specify either -B or --classify, not both.\n";
+	return -1;
+    }
+    if (p.classify_mode && (legacy_binary_mode || p.clear_mode || p.force_text || p.text_only || p.binary_only || p.path_mode)) {
+	std::cerr << "Error:  --classify cannot be combined with rewrite mode options.\n";
+	return -1;
+    }
+
     // binary_only ∩ text_only == NULL set
     if ((p.binary_only || p.force_binary) && (p.text_only || p.force_text)) {
 	std::cerr << "Error:  can specify binary-only or text-only, not both.\n";
@@ -502,7 +485,7 @@ main(int argc, const char *argv[])
     }
 
     if (p.classify_mode) {
-	std::set<std::string> files;
+	std::vector<std::string> files;
 	if (file_list.length()) {
 	    if (nonopts.size()) {
 		std::cerr << "Error:  specify either --files or file paths for --classify, not both.\n";
@@ -516,12 +499,12 @@ main(int argc, const char *argv[])
 	    std::string line;
 	    while (std::getline(instream, line)) {
 		if (line.length())
-		    files.insert(line);
+		    files.push_back(line);
 	    }
 	    instream.close();
 	} else {
 	    for (const auto &fname : nonopts)
-		files.insert(fname);
+		files.push_back(fname);
 	}
 	if (files.empty()) {
 	    std::cerr << "Error:  --classify needs at least one file path.\n";
@@ -548,8 +531,12 @@ main(int argc, const char *argv[])
 	std::cout << options.help({""}) << std::endl;
 	return -1;
     }
-    if ((file_list.length() && (p.binary_only || p.force_binary)) && (nonopts.size() < 1)) {
-	std::cerr << "Warning:  binary filtering uses a target string and (optionally) a --clear-char character - full replacement strings are not supported.  Ignoring specified replacement string.\n";
+    if ((file_list.length() && (p.binary_only || p.force_binary)) && nonopts.empty()) {
+	std::cerr << "Error:  binary file-list processing needs at least one target string.\n";
+	return -1;
+    }
+    if ((file_list.length() && p.binary_only && !p.force_binary) && (nonopts.size() > 1)) {
+	std::cerr << "Warning:  binary-only filtering uses one target string; ignoring additional arguments.\n";
     }
     if ((!file_list.length() && !p.binary_only && !p.force_binary) && (nonopts.size() != 2 && nonopts.size() != 3)) {
 	std::cerr << "Error:  we need a file, a target string and (optionally) a replacement string.\n";
@@ -566,6 +553,10 @@ main(int argc, const char *argv[])
     }
     if (p.force_text && !file_list.length() && nonopts.size() != 3) {
 	std::cerr << "Error:  replacing string in text file - need file, target string and replacement string as arguments.\n";
+	return -1;
+    }
+    if (p.force_text && file_list.length() && nonopts.size() != 2) {
+	std::cerr << "Error:  replacing strings in a text file list needs target string and replacement string arguments.\n";
 	return -1;
     }
 

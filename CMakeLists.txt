@@ -36,16 +36,10 @@
 # Minimum required version of CMake
 cmake_minimum_required(VERSION 3.18)
 
-# set CMake project name
 project(STRCLEAR)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-include_directories(
-  ${CMAKE_CURRENT_BINARY_DIR}
-  ${CMAKE_CURRENT_SOURCE_DIR}
-  )
 
 if(NOT DEFINED BIN_DIR)
   set(BIN_DIR bin)
@@ -56,27 +50,18 @@ check_cxx_compiler_flag(-O3 O3_COMPILER_FLAG)
 
 find_package(Threads REQUIRED)
 
-# Utility to stage files and generate a list of
-# files to process with strclear
-add_executable(dirsync dirsync.cpp)
-if (O3_COMPILER_FLAG)
-  # If we have the O3 flag, use it
-  target_compile_options(dirsync PRIVATE "-O3")
-endif (O3_COMPILER_FLAG)
-install(TARGETS dirsync DESTINATION ${BIN_DIR})
-
-# Utility that modifies files to update or remove
-# embedded path information (in principle it is
-# more general than that, but that is its primary
-# BRL-CAD job.
 add_executable(strclear strclear.cpp)
+target_include_directories(strclear PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  )
 target_link_libraries(strclear PRIVATE Threads::Threads)
 if (O3_COMPILER_FLAG)
-  # If we have the O3 flag, use it
   target_compile_options(strclear PRIVATE "-O3")
 endif (O3_COMPILER_FLAG)
 install(TARGETS strclear DESTINATION ${BIN_DIR})
 
+option(STRCLEAR_BUILD_TESTS "Build strclear tests" ON)
 if (STRCLEAR_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
@@ -88,4 +73,3 @@ endif ()
 # indent-tabs-mode: t
 # End:
 # ex: shiftwidth=2 tabstop=8
-

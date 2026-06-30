@@ -2,17 +2,6 @@
 #                strclear tests
 ###################################################
 
-# --- Testdata staging requirements ---
-# (plain.txt, withpaths.txt, relpath.txt, abspath.txt, target.txt, withsymlink.txt, no_match.txt,
-# multi.txt, emptysearch.txt, onlysearch.txt, cclear.bin)
-# Place these in testdata/ in the same directory as this CMakeLists.txt
-
-# --- CMake scripts for custom staging ---
-# make_large_file.cmake: create ${TESTDIR}/large.txt with lots of "foo"
-# stage_mixed_list.cmake: create mixed1.txt, mixed2.txt, mixed3.txt, mixedbin.bin, mixed_files.txt
-# stage_parallel_list.cmake: create par1.txt ... par20.txt, parallel_files.txt
-# stage_filter_list.cmake: create text1.txt, text2.txt, bin1.bin, bin2.bin, filter_files.txt
-
 # Counting characters in a binary file is a little outside
 # CMake's wheelhouse, so add a utility to do it.
 add_executable(charcnt charcnt.cpp)
@@ -23,24 +12,6 @@ file(MAKE_DIRECTORY "${TESTDIR}")
 # We need to use this rather than cmake_path(NORMALIZE) to resolve symlinks.
 # Do this AFTER file(MAKE_DIRECTORY) is called.
 file(REAL_PATH "${TESTDIR}" TESTDIR)
-
-# Helper function to compare file contents
-function(assert_file_contains file expected_text)
-  file(READ "${file}" file_content)
-  string(FIND "${file_content}" "${expected_text}" found)
-  if(found EQUAL -1)
-    message(FATAL_ERROR "File ${file} does not contain expected text: '${expected_text}'\nActual content:\n${file_content}")
-  endif()
-endfunction()
-
-# Helper function to assert file does NOT contain text
-function(assert_file_not_contains file unexpected_text)
-  file(READ "${file}" file_content)
-  string(FIND "${file_content}" "${unexpected_text}" found)
-  if(NOT found EQUAL -1)
-    message(FATAL_ERROR "File ${file} still contains text: '${unexpected_text}'\nActual content:\n${file_content}")
-  endif()
-endfunction()
 
 # --- Test 1: Non-filesystem string replace ---
 # Set up a template to use as input.  Since the contents are altered, the test
@@ -201,61 +172,47 @@ add_test(NAME BinaryOnlyFiltering
 )
 
 
-# --- Test 13: Help and Version Output ---
+# --- Test 15: Binary/text classification contracts ---
+add_test(NAME ClassifyModes
+  COMMAND ${CMAKE_COMMAND}
+  -DTDIR=${TESTDIR}
+  -DBINARY_SRC=${CMAKE_CURRENT_SOURCE_DIR}/${BINARYFILE}
+  -DSTRCLEAR=$<TARGET_FILE:strclear>
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_classify.cmake"
+)
+
+# --- Test 16: BRL-CAD compatibility options ---
+add_test(NAME CompatibilityModes
+  COMMAND ${CMAKE_COMMAND}
+  -DTDIR=${TESTDIR}
+  -DBINARY_SRC=${CMAKE_CURRENT_SOURCE_DIR}/${BINARYFILE}
+  -DCHARCNT=$<TARGET_FILE:charcnt>
+  -DSTRCLEAR=$<TARGET_FILE:strclear>
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_compat_modes.cmake"
+)
+
+# --- Test 17: Help output ---
 add_test(NAME StrclearHelp
-  COMMAND strclear -v --help
+  COMMAND $<TARGET_FILE:strclear> -v --help
 )
 set_tests_properties(StrclearHelp PROPERTIES
   PASS_REGULAR_EXPRESSION "usage|help|clear"
 )
 
-# --- Test 14: Nonexistent File ---
+# --- Test 18: Nonexistent file ---
 add_test(NAME NonexistentFile
-  COMMAND strclear -v "${TESTDIR}/does_not_exist.txt" foo bar
+  COMMAND $<TARGET_FILE:strclear> -v "${TESTDIR}/does_not_exist.txt" foo bar
 )
 
-# --- Test 15: Read-only File (should fail) ---
+# --- Test 19: Read-only file should fail ---
 # Make a read-only
 set(READONLYFILE "${TESTDIR}/readonly.txt")
 file(WRITE "${READONLYFILE}" "Read_only")
 file(CHMOD "${READONLYFILE}" PERMISSIONS OWNER_READ GROUP_READ WORLD_READ)
 add_test(NAME ReadOnlyFile
-  COMMAND strclear -v "${READONLYFILE}" Read_only Written
+  COMMAND $<TARGET_FILE:strclear> -v "${READONLYFILE}" Read_only Written
 )
 set_tests_properties(ReadOnlyFile PROPERTIES WILL_FAIL TRUE)
-
-
-# --- Test #: Unicode/UTF-8 Replacement ---
-#     Disabled for now - we don't support Unicode yet
-#set(FILE_UTF8 "${TESTDIR}/utf8.txt")
-## Note: 💧 is a multi-byte character; CMake will encode as UTF-8
-#file(WRITE "${FILE_UTF8}" "αβγ foo δει foo ζ")
-#add_test(NAME UnicodeReplacement
-#    COMMAND strclear -v "${FILE_UTF8}" foo 💧
-#)
-#add_test(NAME VerifyUnicodeReplacement
-#    COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_UTF8} -Dexpected=💧 -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-#)
-
-###################################################
-#                dirsync tests
-###################################################
-set(WORKING_SYMLINKS 0)
-if(symlink_ret EQUAL 0)
-  set(WORKING_SYMLINKS 1)
-endif()
-set(TESTDIR "${CMAKE_CURRENT_BINARY_DIR}/dirsync_test")
-file(MAKE_DIRECTORY "${TESTDIR}")
-# We need to use this rather than cmake_path(NORMALIZE) to resolve symlinks.
-# Do this AFTER file(MAKE_DIRECTORY) is called.
-file(REAL_PATH "${TESTDIR}" TESTDIR)
-
-add_test(NAME DirSyncSuite
-   COMMAND ${CMAKE_COMMAND} -DDIRSYNC=$<TARGET_FILE:dirsync>
-   -DTESTDIR=${TESTDIR} -DCHECK_SYMLINKS=${WORKING_SYMLINKS}
-   -P ${CMAKE_CURRENT_SOURCE_DIR}/test_dirsync.cmake
-   )
-
 
 
 # Local Variables:
