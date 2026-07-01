@@ -576,17 +576,48 @@ main(int argc, const char *argv[])
 	    std::cerr << "Error:  --classify needs at least one file path.\n";
 	    return -1;
 	}
+
+	// Classification is I/O bound (each file reads at most a few KB), so
+	// for large file lists - which is exactly when build systems call
+	// --classify in batch - the sequential cost of opening thousands of
+	// files dominates.  Fan the work out across threads the same way
+	// process_files() does.  Results are stored by index so the emitted
+	// JSON records stay in input order regardless of completion order.
+	std::vector<int> results(files.size(), 0); // 1 = binary, 0 = text, -1 = error
+	std::atomic<size_t> next_idx(0);
+	unsigned int num_threads = (unsigned int)(0.5 * (double)std::thread::hardware_concurrency());
+	if (num_threads == 0)
+	    num_threads = 4;
+	num_threads = std::min(num_threads, (unsigned int)files.size());
+
+	auto classify_worker = [&]() {
+	    size_t i;
+	    while ((i = next_idx.fetch_add(1, std::memory_order_relaxed)) < files.size()) {
+		std::ifstream check_fs(files[i], std::ios::binary);
+		if (!check_fs.is_open()) {
+		    std::cerr << "Unable to open file " << files[i] << "\n";
+		    results[i] = -1;
+		    continue;
+		}
+		results[i] = is_binary(check_fs) ? 1 : 0;
+		check_fs.close();
+	    }
+	};
+
+	std::vector<std::thread> classify_threads;
+	classify_threads.reserve(num_threads);
+	for (unsigned int t = 0; t < num_threads; ++t)
+	    classify_threads.emplace_back(classify_worker);
+	for (auto &t : classify_threads)
+	    t.join();
+
 	int ret = 0;
-	for (const auto &fname : files) {
-	    std::ifstream check_fs(fname, std::ios::binary);
-	    if (!check_fs.is_open()) {
-		std::cerr << "Unable to open file " << fname << "\n";
+	for (size_t i = 0; i < files.size(); i++) {
+	    if (results[i] < 0) {
 		ret = -1;
 		continue;
 	    }
-	    bool binary_mode = is_binary(check_fs);
-	    check_fs.close();
-	    std::cout << "{\"type\":\"" << (binary_mode ? "BINARY" : "TEXT") << "\",\"path\":\"" << json_escape(fname) << "\"}\n";
+	    std::cout << "{\"type\":\"" << (results[i] == 1 ? "BINARY" : "TEXT") << "\",\"path\":\"" << json_escape(files[i]) << "\"}\n";
 	}
 	return ret;
     }
