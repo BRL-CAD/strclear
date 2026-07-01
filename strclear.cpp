@@ -159,23 +159,65 @@ expand_path_forms(const std::string &input) {
     if (!input.length())
 	return forms;
 
-    // Always include the original spelling.
-    forms.push_back(input);
+    auto add_form = [&](const fs::path &p) {
+	std::string s = p.string();
+	if (!s.empty())
+	    forms.push_back(s);
+    };
+
+    auto add_partial_canonical = [&](const fs::path &p) {
+	std::error_code ec;
+	fs::path probe = fs::absolute(p, ec);
+	if (ec)
+	    probe = p;
+
+	fs::path suffix;
+	while (!probe.empty() && !fs::exists(probe, ec)) {
+	    fs::path parent = probe.parent_path();
+	    if (parent == probe)
+		break;
+	    if (suffix.empty())
+		suffix = probe.filename();
+	    else
+		suffix = probe.filename() / suffix;
+	    probe = parent;
+	    ec.clear();
+	}
+
+	if (probe.empty() || !fs::exists(probe, ec))
+	    return;
+
+	ec.clear();
+	fs::path canon = fs::canonical(probe, ec);
+	if (ec || canon.empty())
+	    return;
+
+	if (!suffix.empty())
+	    canon /= suffix;
+	add_form(canon);
+    };
 
     try {
 	fs::path p(input);
-	if (fs::exists(p) && (fs::is_regular_file(p) || fs::is_symlink(p) || fs::is_directory(p))) {
-	    std::error_code ec;
-	    auto abs = fs::absolute(p, ec).string();
-	    if (!abs.empty() && abs != input) forms.push_back(abs);
 
-	    ec.clear();
-	    auto canon = fs::canonical(p, ec).string();
-	    if (!ec && !canon.empty() && canon != input && canon != abs) forms.push_back(canon);
+	// Always include the original spelling, plus cheap normalized forms.
+	add_form(p);
+	std::error_code ec;
+	fs::path abs = fs::absolute(p, ec);
+	if (!ec)
+	    add_form(abs);
+	add_form(p.lexically_normal());
+	if (!ec)
+	    add_form(abs.lexically_normal());
 
-	    auto norm = p.lexically_normal().string();
-	    if (!norm.empty() && norm != input && norm != abs && norm != canon) forms.push_back(norm);
+	ec.clear();
+	if (fs::exists(p, ec)) {
+	    fs::path canon = fs::canonical(p, ec);
+	    if (!ec)
+		add_form(canon);
 	}
+
+	add_partial_canonical(p);
     } catch (...) {
 	// Ignore errors (broken symlink, permission denied, etc).
     }
@@ -189,8 +231,32 @@ expand_path_forms(const std::string &input) {
 		   return a > b; // lexicographical descending
 	        }
 	     );
+    forms.erase(std::unique(forms.begin(), forms.end()), forms.end());
 
     return forms;
+}
+
+inline std::vector<std::string>
+expand_target_strings(const std::vector<std::string> &targets, bool path_mode)
+{
+    std::vector<std::string> expanded;
+    if (!path_mode) {
+	expanded = targets;
+    } else {
+	for (const auto &target : targets) {
+	    std::vector<std::string> forms = expand_path_forms(target);
+	    expanded.insert(expanded.end(), forms.begin(), forms.end());
+	}
+    }
+
+    std::sort(expanded.begin(), expanded.end(),
+	      [](const std::string &a, const std::string &b) {
+		  if (a.size() != b.size())
+		      return a.size() > b.size();
+		  return a > b;
+	      });
+    expanded.erase(std::unique(expanded.begin(), expanded.end()), expanded.end());
+    return expanded;
 }
 
 int
@@ -416,7 +482,7 @@ main(int argc, const char *argv[])
 	    ("f,files",       "Provide a list of files to process.", cxxopts::value<std::string>(file_list))
 	    ("clear-char",    "Specify a character to use when clearing strings in files", cxxopts::value<char>(p.clear_char))
 	    ("clear_char",    "Specify a character to use when clearing strings in files", cxxopts::value<char>(p.clear_char))
-	    ("p,paths",       "Expand a target string that is a file path into all recognized forms (original, absolute, canonical, normalized).", cxxopts::value<bool>(p.path_mode))
+	    ("p,paths",       "Expand target strings that are file paths into recognized forms (original, absolute, canonical, normalized).", cxxopts::value<bool>(p.path_mode))
 	    ("v,verbose",     "Verbose reporting during processing", cxxopts::value<bool>(p.verbose))
 	    ("h,help",        "Print help")
 	    ;
@@ -535,9 +601,6 @@ main(int argc, const char *argv[])
 	std::cerr << "Error:  binary file-list processing needs at least one target string.\n";
 	return -1;
     }
-    if ((file_list.length() && p.binary_only && !p.force_binary) && (nonopts.size() > 1)) {
-	std::cerr << "Warning:  binary-only filtering uses one target string; ignoring additional arguments.\n";
-    }
     if ((!file_list.length() && !p.binary_only && !p.force_binary) && (nonopts.size() != 2 && nonopts.size() != 3)) {
 	std::cerr << "Error:  we need a file, a target string and (optionally) a replacement string.\n";
 	std::cout << options.help({""}) << std::endl;
@@ -583,7 +646,7 @@ main(int argc, const char *argv[])
 	instream.close();
 
 	target_str = nonopts[0];
-	if (p.force_binary) {
+	if (p.force_binary || p.binary_only) {
 	    for (size_t i = 0; i < nonopts.size(); i++)
 		p.tgt_strs.push_back(nonopts[i]);
 	} else if (!p.binary_only) {
@@ -596,14 +659,11 @@ main(int argc, const char *argv[])
 	return -1;
     }
 
-    if (!p.force_binary) {
-	if (p.path_mode) {
-	    p.tgt_strs = expand_path_forms(target_str);
-	} else {
-	    p.tgt_strs.clear();
-	    p.tgt_strs.push_back(target_str);
-	}
+    if (!p.force_binary && !(file_list.length() && p.binary_only)) {
+	p.tgt_strs.clear();
+	p.tgt_strs.push_back(target_str);
     }
+    p.tgt_strs = expand_target_strings(p.tgt_strs, p.path_mode);
 
     std::map<std::string, std::atomic<int>> op_tally;
     process_files(op_tally, files, p);
