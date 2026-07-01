@@ -2,234 +2,218 @@
 #                strclear tests
 ###################################################
 
+# Counting characters in a binary file is a little outside
+# CMake's wheelhouse, so add a utility to do it.
+add_executable(charcnt charcnt.cpp)
+
 # Directory for test artifacts
 set(TESTDIR "${CMAKE_CURRENT_BINARY_DIR}/testfiles")
 file(MAKE_DIRECTORY "${TESTDIR}")
-
-# Helper function to compare file contents
-function(assert_file_contains file expected_text)
-    file(READ "${file}" file_content)
-    string(FIND "${file_content}" "${expected_text}" found)
-    if(found EQUAL -1)
-        message(FATAL_ERROR "File ${file} does not contain expected text: '${expected_text}'\nActual content:\n${file_content}")
-    endif()
-endfunction()
-
-# Helper function to assert file does NOT contain text
-function(assert_file_not_contains file unexpected_text)
-    file(READ "${file}" file_content)
-    string(FIND "${file_content}" "${unexpected_text}" found)
-    if(NOT found EQUAL -1)
-        message(FATAL_ERROR "File ${file} still contains text: '${unexpected_text}'\nActual content:\n${file_content}")
-    endif()
-endfunction()
+# We need to use this rather than cmake_path(NORMALIZE) to resolve symlinks.
+# Do this AFTER file(MAKE_DIRECTORY) is called.
+file(REAL_PATH "${TESTDIR}" TESTDIR)
 
 # --- Test 1: Non-filesystem string replace ---
-set(TEXT1 "This is a test string foo and bar.\nAnother foo here.")
-set(FILE1 "${TESTDIR}/plain.txt")
-file(WRITE "${FILE1}" "${TEXT1}")
-
+# Set up a template to use as input.  Since the contents are altered, the test
+# needs to stage it each time - that's why we write it out with the .in suffix.
+set(PLAINFILE "plain.txt")
+file(WRITE "${TESTDIR}/${PLAINFILE}.in" "This is a test string foo and bar.\nAnother foo here.")
 add_test(NAME BasicStringReplace
-    COMMAND strclear -r "${FILE1}" foo baz
-)
-set_tests_properties(BasicStringReplace PROPERTIES
-    FIXTURES_SETUP basic_replace
-)
-
-add_test(NAME VerifyBasicStringReplace
-    COMMAND ${CMAKE_COMMAND} -Dfile=${FILE1} -Dexpected=baz -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyBasicStringReplace PROPERTIES
-    FIXTURES_REQUIRED basic_replace
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${PLAINFILE}
+  -DTNUM=1 -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=2 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
 )
 
 # --- Test 2: Path expansion (filesystem) ---
-set(REL_PATH "relpath.txt")
-set(ABS_PATH "${TESTDIR}/abspath.txt")
-set(FILE2 "${TESTDIR}/withpaths.txt")
-
-get_filename_component(ABS_PATH_FOR_FILE "${ABS_PATH}" ABSOLUTE)
-set(TEXT2 "Here is a path: ${REL_PATH}\nAnd here is another: ${ABS_PATH_FOR_FILE}\n")
-file(WRITE "${FILE2}" "${TEXT2}")
-
-file(WRITE "${TESTDIR}/${REL_PATH}" "dummy")
-file(WRITE "${ABS_PATH}" "dummy")
+# Set up the template for the to-be-altered file.  For this test we want to
+# point to a file that is present - we can just target the plain.in file from
+# the first test, since that is already placed on the filesystem by CMake.
+set(WITHPATHSFILE "withpaths.txt")
+get_filename_component(ABS_PATH_FOR_FILE "${TESTDIR}/${PLAINFILE}.in" ABSOLUTE)
+set(WITHPATHS_TXT "Relative: ${PLAINFILE}.in\nAbsolute: ${ABS_PATH_FOR_FILE}\n")
+file(WRITE "${TESTDIR}/${WITHPATHSFILE}.in" "${WITHPATHS_TXT}")
 
 add_test(NAME PathExpansionReplace
-    COMMAND strclear -r -p "${FILE2}" "${REL_PATH}" CLEARED
-)
-set_tests_properties(PathExpansionReplace PROPERTIES
-    FIXTURES_SETUP path_replace
-)
-
-add_test(NAME VerifyPathExpansionReplace
-    COMMAND ${CMAKE_COMMAND} -Dfile=${FILE2} -Dexpected=CLEARED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyPathExpansionReplace PROPERTIES
-    FIXTURES_REQUIRED path_replace
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${WITHPATHSFILE}
+  -DTNUM=2 -DTGTSTR=${PLAINFILE}.in -DEXPSTR=CLEARED -DEXPCNT=2 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v\;-p
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
 )
 
 # --- Test 3: Symlink path expansion ---
-set(SRC_FILE "${TESTDIR}/target.txt")
-set(SYM_PATH "${TESTDIR}/symlink.txt")
-set(FILE3 "${TESTDIR}/withsymlink.txt")
-set(TEXT3 "Original: ${SRC_FILE}\nSymlink: ${SYM_PATH}\n")
-file(WRITE "${FILE3}" "${TEXT3}")
-file(WRITE "${SRC_FILE}" "dummy")
+# IFF the OS supports making symlinks, we can do this test - find out
+set(SYMFILE "symlink.txt")
+file(CREATE_LINK "${TESTDIR}/${PLAINFILE}.in" "${TESTDIR}/${SYMFILE}" SYMBOLIC RESULT symlink_ret)
+if(symlink_ret EQUAL 0)
+  # Set up the template for the to-be-altered file.
+  set(WITHSYMFILE "withsymlink.txt")
+  set(WITHSYMLINK_TXT "Original: ${TESTDIR}/${PLAINFILE}.in\nSymlink: ${TESTDIR}/${SYMFILE}\n")
+  file(WRITE "${TESTDIR}/${WITHSYMFILE}.in" "${WITHSYMLINK_TXT}")
 
-file(CREATE_LINK "${SRC_FILE}" "${SYM_PATH}" SYMBOLIC)
-
-add_test(NAME SymlinkPathExpansionReplace
-    COMMAND strclear -r -p "${FILE3}" "${SYM_PATH}" "CLEAN"
-)
-set_tests_properties(SymlinkPathExpansionReplace PROPERTIES
-    FIXTURES_SETUP symlink_replace
-)
-
-add_test(NAME VerifySymlinkPathExpansionReplace
-    COMMAND ${CMAKE_COMMAND} -Dfile=${FILE3} -Dexpected=CLEAN -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifySymlinkPathExpansionReplace PROPERTIES
-    FIXTURES_REQUIRED symlink_replace
-)
+  add_test(NAME SymlinkPathExpansionReplace
+    COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${WITHSYMFILE}
+    -DTNUM=3 -DTGTSTR=${SYMFILE} -DEXPSTR=CLEARED -DEXPCNT=2 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v\;-p
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
+  )
+endif()
 
 # --- Test 4: No Replacement Occurs ---
-set(FILE_NOMATCH "${TESTDIR}/no_match.txt")
-set(TEXT_NOMATCH "Just a normal text file.")
-file(WRITE "${FILE_NOMATCH}" "${TEXT_NOMATCH}")
-
+set(NOMATCHFILE "no_match.txt")
+file(WRITE "${TESTDIR}/${NOMATCHFILE}.in" "Just a normal text file.")
 add_test(NAME NoReplacementIfNoMatch
-    COMMAND strclear -r "${FILE_NOMATCH}" "foo" "bar"
-)
-set_tests_properties(NoReplacementIfNoMatch PROPERTIES
-    FIXTURES_SETUP no_replace
-)
-
-add_test(NAME VerifyNoReplacementIfNoMatch
-    COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_NOMATCH} -Dexpected=${TEXT_NOMATCH} -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyNoReplacementIfNoMatch PROPERTIES
-    FIXTURES_REQUIRED no_replace
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${NOMATCHFILE}
+  -DTNUM=4 -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=0 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
 )
 
-# --- Test 5: Multiple Occurrences ---
-set(FILE_MULTI "${TESTDIR}/multi.txt")
-set(TEXT_MULTI "foo bar foo baz foo")
-file(WRITE "${FILE_MULTI}" "${TEXT_MULTI}")
-
-add_test(NAME MultipleReplacements
-    COMMAND strclear -r "${FILE_MULTI}" foo CLEARED
-)
-set_tests_properties(MultipleReplacements PROPERTIES
-    FIXTURES_SETUP multi_replace
-)
-
-add_test(NAME VerifyMultipleReplacements
-    COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_MULTI} -Dexpected=CLEARED -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyMultipleReplacements PROPERTIES
-    FIXTURES_REQUIRED multi_replace
+# --- Test 5: Many Occurrences ---
+set(MULTIFILE "multi.txt")
+file(WRITE "${TESTDIR}/${MULTIFILE}.in" "foo bar foo baz ")
+foreach(i RANGE 100)
+  file(APPEND "${TESTDIR}/${MULTIFILE}.in" "foo ")
+endforeach()
+add_test(NAME ManyOccurrences
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${MULTIFILE}
+  -DTNUM=5 -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=103 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
 )
 
 # --- Test 6: Empty Search String (should fail) ---
-set(FILE_EMPTYSEARCH "${TESTDIR}/emptysearch.txt")
-file(WRITE "${FILE_EMPTYSEARCH}" "some text")
-
 add_test(NAME EmptySearchString
-    COMMAND strclear -r "${FILE_EMPTYSEARCH}" "" replacement
-)
-set_tests_properties(EmptySearchString PROPERTIES
-    WILL_FAIL TRUE
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${NOMATCHFILE}
+  -DTNUM=6 -DTGTSTR= -DEXPSTR=CLEARED -DEXPCNT=0 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
 )
 
 # --- Test 7: File with Only Search String ---
-set(FILE_ONLYSEARCH "${TESTDIR}/onlysearch.txt")
-file(WRITE "${FILE_ONLYSEARCH}" "foo")
-
+set(ONLYFILE "onlysearch.txt")
+file(WRITE "${TESTDIR}/${ONLYFILE}.in" "foo")
 add_test(NAME OnlySearchString
-    COMMAND strclear -r "${FILE_ONLYSEARCH}" foo gone
-)
-set_tests_properties(OnlySearchString PROPERTIES
-    FIXTURES_SETUP onlysearch_replace
-)
-
-add_test(NAME VerifyOnlySearchString
-    COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_ONLYSEARCH} -Dexpected=gone -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyOnlySearchString PROPERTIES
-    FIXTURES_REQUIRED onlysearch_replace
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${ONLYFILE}
+  -DTNUM=7 -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=1 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
 )
 
-# --- Test 8: Large File Replacement ---
-set(FILE_LARGE "${TESTDIR}/large.txt")
-set(SEARCH_LARGE "foo")
-set(REPLACE_LARGE "bar")
-file(WRITE "${FILE_LARGE}" "")
-foreach(i RANGE 1 1000)
-    file(APPEND "${FILE_LARGE}" "foo this is line ${i}\n")
+# --- Test 8: Large(ish) File Replacement ---
+set(LARGEFILE "large.txt")
+file(WRITE "${TESTDIR}/${LARGEFILE}.in" "Autogenerated large file:\n")
+foreach(i RANGE 1000)
+  file(APPEND "${TESTDIR}/${LARGEFILE}.in" "Line foo: foo${i}foo\n")
 endforeach()
-
-add_test(NAME LargeFileReplacement
-    COMMAND strclear -r "${FILE_LARGE}" foo bar
-)
-set_tests_properties(LargeFileReplacement PROPERTIES
-    FIXTURES_SETUP large_replace
+add_test(NAME LargeFile
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${LARGEFILE}
+  -DTNUM=8 -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=3003 -DQUIET_RUN=1 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
 )
 
-add_test(NAME VerifyLargeFileReplacement
-    COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_LARGE} -Dexpected=bar -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-)
-set_tests_properties(VerifyLargeFileReplacement PROPERTIES
-    FIXTURES_REQUIRED large_replace
-)
-
-# --- Test 9: Unicode/UTF-8 Replacement ---
-#     Disabled for now - we don't support Unicode yet
-#set(FILE_UTF8 "${TESTDIR}/utf8.txt")
-## Note: 💧 is a multi-byte character; CMake will encode as UTF-8
-#file(WRITE "${FILE_UTF8}" "αβγ foo δει foo ζ")
-#add_test(NAME UnicodeReplacement
-#    COMMAND strclear -r "${FILE_UTF8}" foo 💧
-#)
-#set_tests_properties(UnicodeReplacement PROPERTIES
-#    FIXTURES_SETUP unicode_replace
-#)
-#
-#add_test(NAME VerifyUnicodeReplacement
-#    COMMAND ${CMAKE_COMMAND} -Dfile=${FILE_UTF8} -Dexpected=💧 -P "${CMAKE_CURRENT_LIST_DIR}/verify_contains.cmake"
-#)
-#set_tests_properties(VerifyUnicodeReplacement PROPERTIES
-#    FIXTURES_REQUIRED unicode_replace
-#)
-
-# --- Test 10: Read-only File (should fail) ---
-set(FILE_RO "${TESTDIR}/readonly.txt")
-file(WRITE "${FILE_RO}" "foo bar")
-execute_process(COMMAND chmod a-w "${FILE_RO}")
-
-add_test(NAME ReadOnlyFile
-    COMMAND strclear -r "${FILE_RO}" foo bar
-)
-set_tests_properties(ReadOnlyFile PROPERTIES
-    WILL_FAIL TRUE
+# --- Test 9: Binary File Alteration ---
+set(BINARYFILE "binary_file.bin")
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/${BINARYFILE}" DESTINATION ${TESTDIR})
+file(RENAME "${TESTDIR}/${BINARYFILE}" "${TESTDIR}/${BINARYFILE}.in")
+add_test(NAME BinaryFile
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${BINARYFILE}
+  -DTNUM=9 -DTGTSTR=foo -DEXPSTR=NULL -DEXPCNT=6 -DQUIET_RUN=1 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
+  -DCHARCNT=$<TARGET_FILE:charcnt>
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
 )
 
-# --- Test 11: Help and Version Output ---
+# --- Test 10: Binary File Alteration, alternate character ---
+set(CLEAR_CHAR "X")
+add_test(NAME BinaryFileClearChar
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata -DTDIR=${TESTDIR} -DTFILE=${BINARYFILE}
+  -DTNUM=10 -DTGTSTR=b -DEXPSTR=NULL -DEXPCHAR=${CLEAR_CHAR} -DEXPCNT=2 -DQUIET_RUN=1 -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v\;--clear-char=${CLEAR_CHAR}
+  -DCHARCNT=$<TARGET_FILE:charcnt>
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_test.cmake"
+)
+
+# --- Test 11: Mixed Input List via --files option ---
+set(MIXTXTFILE "mix_input_list.txt")
+file(WRITE "${TESTDIR}/${MIXTXTFILE}.in" "This is a text input for mixed lists.  foo.")
+set(MIXBINFILE "mix_input_list.bin")
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/${BINARYFILE}" DESTINATION ${TESTDIR})
+file(RENAME "${TESTDIR}/${BINARYFILE}" "${TESTDIR}/${MIXBINFILE}.in")
+
+add_test(NAME MixedList
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata
+  -DTDIR=${TESTDIR} -DTNUM=11 -DCPYCNT=1 -DQUIET_RUN=1
+  -DTBINFILE=${MIXBINFILE} -DEXPNULLCNT=6 -DCHARCNT=$<TARGET_FILE:charcnt>
+  -DTTXTFILE=${MIXTXTFILE} -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=1
+  -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_mixed_list.cmake"
+)
+
+# --- Test 12: Parallel Processing (large mixed list, stress test) ---
+add_test(NAME ParallelProcessing
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata
+  -DTDIR=${TESTDIR} -DTNUM=12 -DCPYCNT=50 -DQUIET_RUN=1
+  -DTBINFILE=${MIXBINFILE} -DEXPNULLCNT=6 -DCHARCNT=$<TARGET_FILE:charcnt>
+  -DTTXTFILE=${MIXTXTFILE} -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=1
+  -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_mixed_list.cmake"
+)
+
+# --- Test 13: Text file only filtering from a mixed list ---
+add_test(NAME TextOnlyFiltering
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata
+  -DTDIR=${TESTDIR} -DTNUM=13 -DCPYCNT=1 -DQUIET_RUN=1
+  -DTBINFILE=${MIXBINFILE} -DEXPNULLCNT=3 -DCHARCNT=$<TARGET_FILE:charcnt>
+  -DTTXTFILE=${MIXTXTFILE} -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=1
+  -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v\;--text-only
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_mixed_list.cmake"
+)
+
+# --- Test 14: Binary file only filtering from a mixed list ---
+add_test(NAME BinaryOnlyFiltering
+  COMMAND ${CMAKE_COMMAND} -DSDIR=${CMAKE_CURRENT_SOURCE_DIR}/testdata
+  -DTDIR=${TESTDIR} -DTNUM=14 -DCPYCNT=1 -DQUIET_RUN=1
+  -DTBINFILE=${MIXBINFILE} -DEXPNULLCNT=6 -DCHARCNT=$<TARGET_FILE:charcnt>
+  -DTTXTFILE=${MIXTXTFILE} -DTGTSTR=foo -DEXPSTR=CLEARED -DEXPCNT=0
+  -DSTRCLEAR=$<TARGET_FILE:strclear> -DSTRCLEAR_OPTS=-v\;--binary-only
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_mixed_list.cmake"
+)
+
+
+# --- Test 15: Binary/text classification contracts ---
+add_test(NAME ClassifyModes
+  COMMAND ${CMAKE_COMMAND}
+  -DTDIR=${TESTDIR}
+  -DBINARY_SRC=${CMAKE_CURRENT_SOURCE_DIR}/${BINARYFILE}
+  -DSTRCLEAR=$<TARGET_FILE:strclear>
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_classify.cmake"
+)
+
+# --- Test 16: BRL-CAD compatibility options ---
+add_test(NAME CompatibilityModes
+  COMMAND ${CMAKE_COMMAND}
+  -DTDIR=${TESTDIR}
+  -DBINARY_SRC=${CMAKE_CURRENT_SOURCE_DIR}/${BINARYFILE}
+  -DCHARCNT=$<TARGET_FILE:charcnt>
+  -DSTRCLEAR=$<TARGET_FILE:strclear>
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/run_compat_modes.cmake"
+)
+
+# --- Test 17: Help output ---
 add_test(NAME StrclearHelp
-    COMMAND strclear --help
+  COMMAND $<TARGET_FILE:strclear> -v --help
 )
 set_tests_properties(StrclearHelp PROPERTIES
-    PASS_REGULAR_EXPRESSION "usage|help|clear"
+  PASS_REGULAR_EXPRESSION "usage|help|clear"
 )
 
-# --- Test 12: Nonexistent File (should fail) ---
-set(NONEXISTENT_FILE "${TESTDIR}/does_not_exist.txt")
+# --- Test 18: Nonexistent file ---
 add_test(NAME NonexistentFile
-    COMMAND strclear -r "${NONEXISTENT_FILE}" foo bar
+  COMMAND $<TARGET_FILE:strclear> -v "${TESTDIR}/does_not_exist.txt" foo bar
 )
-set_tests_properties(NonexistentFile PROPERTIES
-    WILL_FAIL TRUE
+
+# --- Test 19: Read-only file should fail ---
+# Make a read-only
+set(READONLYFILE "${TESTDIR}/readonly.txt")
+file(WRITE "${READONLYFILE}" "Read_only")
+file(CHMOD "${READONLYFILE}" PERMISSIONS OWNER_READ GROUP_READ WORLD_READ)
+add_test(NAME ReadOnlyFile
+  COMMAND $<TARGET_FILE:strclear> -v "${READONLYFILE}" Read_only Written
 )
+set_tests_properties(ReadOnlyFile PROPERTIES WILL_FAIL TRUE)
+
 
 # Local Variables:
 # tab-width: 8
